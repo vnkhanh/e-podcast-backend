@@ -119,7 +119,7 @@ func GoogleLogin(c *gin.Context) {
 		return
 	}
 
-	// ✅ Xác minh token với đúng GOOGLE_CLIENT_ID
+	// Xác minh token với đúng GOOGLE_CLIENT_ID
 	payload, err := idtoken.Validate(c, input.IDToken, os.Getenv("GOOGLE_CLIENT_ID"))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token Google không hợp lệ"})
@@ -163,6 +163,130 @@ func GoogleLogin(c *gin.Context) {
 			"full_name": user.FullName,
 			"role":      user.Role,
 		},
+	})
+}
+
+// ==== ADMIN TẠO GIẢNG VIÊN ====
+type CreateLecturerInput struct {
+	FullName string `json:"full_name" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+func AdminCreateLecturer(c *gin.Context) {
+	role := c.GetString("role")
+	if role != string(models.RoleAdmin) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Chỉ admin mới có quyền tạo giảng viên"})
+		return
+	}
+
+	var input CreateLecturerInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Kiểm tra email trùng
+	var existing models.User
+	if err := config.DB.Where("email = ?", input.Email).First(&existing).Error; err == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Email đã tồn tại"})
+		return
+	}
+
+	// Mã hoá mật khẩu
+	hashed, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể mã hoá mật khẩu"})
+		return
+	}
+
+	// Tạo tài khoản giảng viên
+	newUser := models.User{
+		FullName: input.FullName,
+		Email:    input.Email,
+		Password: string(hashed),
+		Role:     models.RoleLecturer,
+	}
+
+	if err := config.DB.Create(&newUser).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo tài khoản"})
+		return
+	}
+
+	// Gửi email thông báo (không chặn luồng)
+	go func() {
+		subject := "Tài khoản giảng viên E-Podcast của bạn đã được tạo"
+		body := `
+		<h3>Xin chào ` + input.FullName + `,</h3>
+		<p>Bạn đã được cấp tài khoản giảng viên trên hệ thống <b>E-Podcast</b>.</p>
+		<p><b>Email đăng nhập:</b> ` + input.Email + `<br>
+		<b>Mật khẩu:</b> ` + input.Password + `</p>
+		<p>Vui lòng đăng nhập và đổi mật khẩu sau khi sử dụng lần đầu.</p>
+		<hr>
+		<p><i>Đây là email tự động, vui lòng không trả lời.</i></p>
+		`
+		if err := utils.SendEmail(input.Email, subject, body); err != nil {
+			// In log lỗi, không ảnh hưởng đến API chính
+			println("Lỗi gửi email:", err.Error())
+		}
+	}()
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message": "Tạo giảng viên thành công",
+		"user": gin.H{
+			"id":        newUser.ID,
+			"full_name": newUser.FullName,
+			"email":     newUser.Email,
+			"role":      newUser.Role,
+		},
+	})
+}
+
+// Đổi mật khẩu
+type ChangePasswordInput struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+func ChangePassword(c *gin.Context) {
+	db := config.DB
+	userID := c.GetString("user_id")
+
+	var input ChangePasswordInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Lấy user hiện tại
+	var user models.User
+	if err := db.Where("id = ?", userID).First(&user).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Người dùng không tồn tại"})
+		return
+	}
+
+	// Kiểm tra mật khẩu cũ
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.OldPassword)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Mật khẩu cũ không đúng"})
+		return
+	}
+
+	// Mã hoá mật khẩu mới
+	hashed, err := bcrypt.GenerateFromPassword([]byte(input.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể mã hoá mật khẩu mới"})
+		return
+	}
+
+	// Cập nhật DB
+	user.Password = string(hashed)
+	if err := db.Save(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi cập nhật mật khẩu"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Đổi mật khẩu thành công",
 	})
 }
 

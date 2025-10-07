@@ -21,8 +21,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		auth.POST("/register", controllers.Register)
 		auth.POST("/login", controllers.Login)
 		auth.POST("/logingoogle", controllers.GoogleLogin)
+		auth.PUT("/change-password", controllers.ChangePassword)
 		// auth.POST("/loginfacebook", controllers.FacebookLogin)
-
 	}
 
 	user := api.Group("/user")
@@ -97,6 +97,10 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	tags := admin.Group("/tags")
 	{
 		tags.GET("", controllers.GetTags)
+	}
+	account := admin.Group("/account")
+	{
+		account.POST("", controllers.AdminCreateLecturer)
 	}
 
 	// ==================== Quản lý chương (tạm ẩn nếu chưa dùng) ====================
