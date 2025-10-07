@@ -32,62 +32,81 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	}
 
 	admin := api.Group("/admin")
+	admin.Use(
+		middleware.AuthMiddleware(),
+		middleware.DBMiddleware(db),
+		middleware.RequireRoles("admin", "teacher"),
+	)
+
+	// ==================== Quản lý môn học ====================
+	subjects := admin.Group("/subjects")
 	{
-		admin.Use(middleware.AuthMiddleware(), middleware.DBMiddleware(db), middleware.RequireRoles("admin", "teacher"))
-
-		//Quản lý môn học
-		admin.POST("/subjects", controllers.CreateSubject)
-		admin.GET("/subjects/:id", controllers.GetSubjectDetail)
-		admin.GET("/subjects", controllers.GetSubjects)
-		admin.GET("/subjectsget", controllers.GetSubjectsGet)
-		admin.DELETE("/subjects/:id", controllers.DeleteSubject)
-		admin.PUT("/subjects/:id", controllers.UpdateSubject)
-		admin.PATCH("/subjects/:id/toggle-status", controllers.ToggleSubjectStatus)
-
-		//Quản lý chủ đề
-		admin.POST("/topics", controllers.CreateTopic)
-		admin.GET("/topics", controllers.GetTopics)
-		admin.GET("/topicsget", controllers.GetTopicsGet)
-		admin.PUT("/topics/:id", controllers.UpdateTopic)
-		admin.DELETE("/topics/:id", controllers.DeleteTopic)
-		admin.PATCH("/topics/:id/toggle-status", controllers.ToggleTopicStatus)
-		admin.GET("/topics/:id", controllers.GetTopicDetail)
-
-		//Quản lý danh mục
-		admin.POST("/categories", controllers.CreateCategory)
-		admin.GET("/categories", controllers.GetCategories)
-		admin.GET("/categoriesget", controllers.GetCategoriesGet)
-		admin.PUT("/categories/:id", controllers.UpdateCategory)
-		admin.DELETE("/categories/:id", controllers.DeleteCategory)
-		admin.PATCH("/categories/:id/toggle-status", controllers.ToggleCategoryStatus)
-		admin.GET("/categories/:id", controllers.GetCategoryDetail)
-
-		//Quản lý tài liệu
-		admin.POST("/documents", controllers.UploadDocument)
-		admin.GET("/documents", controllers.GetDocuments)
-		admin.GET("/documents/:id", controllers.GetDocumentDetail)
-		admin.DELETE("/documents/:id", controllers.DeleteDocument)
-
-		//Quản lý podcast
-		admin.POST("/podcasts", controllers.CreatePodcastWithUpload)
-		admin.GET("/podcasts", controllers.GetPodcasts)
-		admin.GET("/podcasts/:id", controllers.GetPodcastDetail)
-
-		//Quản lý tags
-		admin.GET("/tags", controllers.GetTags)
-
-		// admin.GET("/documents/:id", controllers.GetDocumentDetail)
-		// admin.GET("/documents", controllers.GetDocuments)
-		// admin.DELETE("/documents/:id", controllers.DeleteDocument)
-		// admin.PUT("/documents/:id", controllers.UpdateDocument)
-		// admin.PATCH("/documents/:id/toggle-status", controllers.ToggleDocumentStatus)
-
-		// //Quản lý chương
-		// admin.POST("/subjects/:id/chapters", controllers.CreateChapter)
-		// admin.GET("/chapters/:id", controllers.GetChapterDetail)
-		// admin.PUT("/chapters/:id", controllers.UpdateChapter)
-		// admin.DELETE("/chapters/:id", controllers.DeleteChapter)
+		subjects.POST("", controllers.CreateSubject)
+		subjects.GET("", controllers.GetSubjects)
+		subjects.GET("/get", controllers.GetSubjectsGet)
+		subjects.GET("/:id", controllers.GetSubjectDetail)
+		subjects.PUT("/:id", controllers.UpdateSubject)
+		subjects.DELETE("/:id", controllers.DeleteSubject)
+		subjects.PATCH("/:id/toggle-status", controllers.ToggleSubjectStatus)
 	}
+
+	// ==================== Quản lý chủ đề ====================
+	topics := admin.Group("/topics")
+	{
+		topics.POST("", controllers.CreateTopic)
+		topics.GET("", controllers.GetTopics)
+		topics.GET("/get", controllers.GetTopicsGet)
+		topics.GET("/:id", controllers.GetTopicDetail)
+		topics.PUT("/:id", controllers.UpdateTopic)
+		topics.DELETE("/:id", controllers.DeleteTopic)
+		topics.PATCH("/:id/toggle-status", controllers.ToggleTopicStatus)
+	}
+
+	// ==================== Quản lý danh mục ====================
+	categories := admin.Group("/categories")
+	{
+		categories.POST("", controllers.CreateCategory)
+		categories.GET("", controllers.GetCategories)
+		categories.GET("/get", controllers.GetCategoriesGet)
+		categories.GET("/:id", controllers.GetCategoryDetail)
+		categories.PUT("/:id", controllers.UpdateCategory)
+		categories.DELETE("/:id", controllers.DeleteCategory)
+		categories.PATCH("/:id/toggle-status", controllers.ToggleCategoryStatus)
+	}
+
+	// ==================== Quản lý tài liệu ====================
+	documents := admin.Group("/documents")
+	{
+		documents.POST("", controllers.UploadDocument)
+		documents.GET("", controllers.GetDocuments)
+		documents.GET("/:id", controllers.GetDocumentDetail)
+		documents.DELETE("/:id", controllers.DeleteDocument)
+		// documents.PUT("/:id", controllers.UpdateDocument)
+		// documents.PATCH("/:id/toggle-status", controllers.ToggleDocumentStatus)
+	}
+
+	// ==================== Quản lý podcast ====================
+	podcasts := admin.Group("/podcasts")
+	{
+		podcasts.POST("", controllers.CreatePodcastWithUpload)
+		podcasts.GET("", controllers.GetPodcasts)
+		podcasts.GET("/:id", controllers.GetPodcastDetail)
+	}
+
+	// ==================== Quản lý tag ====================
+	tags := admin.Group("/tags")
+	{
+		tags.GET("", controllers.GetTags)
+	}
+
+	// ==================== Quản lý chương (tạm ẩn nếu chưa dùng) ====================
+	// chapters := admin.Group("/chapters")
+	// {
+	// 	chapters.POST("/subjects/:id", controllers.CreateChapter)
+	// 	chapters.GET("/:id", controllers.GetChapterDetail)
+	// 	chapters.PUT("/:id", controllers.UpdateChapter)
+	// 	chapters.DELETE("/:id", controllers.DeleteChapter)
+	// }
 
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)
