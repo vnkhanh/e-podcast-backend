@@ -93,6 +93,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		podcasts.POST("", controllers.CreatePodcastWithUpload)
 		podcasts.GET("", controllers.GetPodcasts)
 		podcasts.GET("/:id", controllers.GetPodcastDetail)
+		podcasts.DELETE("/:id", controllers.DeletePodcast)
+		podcasts.PUT("/:id", controllers.UpdatePodcastMetadata)
 	}
 
 	// ==================== Quản lý tag ====================

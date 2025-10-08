@@ -399,17 +399,196 @@ func GetPodcastDetail(c *gin.Context) {
 	})
 }
 
-// Delete Podcast
+// DELETE /api/admin/podcasts/:id
 func DeletePodcast(c *gin.Context) {
-	id := c.Param("id")
+	db := c.MustGet("db").(*gorm.DB)
+	idStr := c.Param("id")
+	podcastUUID, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID podcast không hợp lệ"})
+		return
+	}
+
+	// Load podcast + document
 	var podcast models.Podcast
-	if err := config.DB.First(&podcast, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Podcast không tồn tại"})
+	if err := db.Preload("Document").First(&podcast, "id = ?", podcastUUID).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi truy vấn DB", "details": err.Error()})
+		}
 		return
 	}
-	if err := config.DB.Delete(&podcast).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa podcast"})
+
+	// Kiểm tra có podcast khác sử dụng cùng document không
+	var otherCount int64
+	if podcast.DocumentID != uuid.Nil {
+		db.Model(&models.Podcast{}).
+			Where("document_id = ? AND id != ?", podcast.DocumentID, podcast.ID).
+			Count(&otherCount)
+	}
+
+	// Xóa file trên Supabase:
+	//  - cover image luôn xóa nếu có
+	//  - nếu document không được dùng bởi podcast khác thì xóa document.FilePath và podcast.AudioURL
+	if podcast.CoverImage != "" {
+		if err := utils.DeleteFileFromSupabase(podcast.CoverImage); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa cover image", "details": err.Error()})
+			return
+		}
+	}
+
+	if otherCount == 0 {
+		// xóa audio file nếu có
+		// if podcast.AudioURL != "" {
+		// 	if err := utils.DeleteFileFromSupabase(podcast.AudioURL); err != nil {
+		// 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa audio file", "details": err.Error()})
+		// 		return
+		// 	}
+		// }
+		// xóa file tài liệu nếu có
+		if podcast.Document.FilePath != "" {
+			if err := utils.DeleteFileFromSupabase(podcast.Document.FilePath); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa file tài liệu", "details": err.Error()})
+				return
+			}
+		}
+	}
+
+	// Bắt đầu transaction để xóa DB
+	tx := db.Begin()
+
+	// Clear associations (many2many)
+	if err := tx.Model(&podcast).Association("Categories").Clear(); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation categories", "details": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Xóa podcast thành công"})
+	if err := tx.Model(&podcast).Association("Topics").Clear(); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation topics", "details": err.Error()})
+		return
+	}
+	if err := tx.Model(&podcast).Association("Tags").Clear(); err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation tags", "details": err.Error()})
+		return
+	}
+
+	// Xóa podcast
+	if err := tx.Delete(&models.Podcast{}, "id = ?", podcast.ID).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa podcast", "details": err.Error()})
+		return
+	}
+
+	// Nếu document không còn podcast nào khác -> xóa document DB
+	documentDeleted := false
+	if otherCount == 0 && podcast.DocumentID != uuid.Nil {
+		if err := tx.Delete(&models.Document{}, "id = ?", podcast.DocumentID).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa tài liệu liên quan", "details": err.Error()})
+			return
+		}
+		documentDeleted = true
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể commit thay đổi", "details": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":          "Đã xóa podcast thành công",
+		"document_deleted": documentDeleted,
+	})
+}
+
+// UpdatePodcastMetadata cập nhật thông tin metadata của podcast (không đụng tới audio, document, status, publish,...)
+func UpdatePodcastMetadata(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	idStr := c.Param("id")
+
+	podcastID, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Podcast ID không hợp lệ"})
+		return
+	}
+
+	var podcast models.Podcast
+	if err := db.Preload("Categories").Preload("Topics").Preload("Tags").
+		First(&podcast, "id = ?", podcastID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
+		return
+	}
+
+	// Nhận dữ liệu từ form
+	title := c.PostForm("title")
+	description := c.PostForm("description")
+	coverImage := c.PostForm("cover_image")
+	chapterID := c.PostForm("chapter_id")
+	categoryIDs := c.PostForm("category_ids")
+	topicIDs := c.PostForm("topic_ids")
+	tagIDs := c.PostForm("tag_ids")
+
+	// Cập nhật thông tin cơ bản
+	if title != "" {
+		podcast.Title = title
+	}
+	if description != "" {
+		podcast.Description = description
+	}
+	if coverImage != "" {
+		podcast.CoverImage = coverImage
+	}
+
+	if chapterID != "" {
+		if chapterUUID, err := uuid.Parse(chapterID); err == nil {
+			podcast.ChapterID = chapterUUID
+		}
+	}
+
+	// ====== Cập nhật các quan hệ N-N ======
+	if categoryIDs != "" {
+		var categories []models.Category
+		for _, id := range splitAndParseUUIDs(categoryIDs) {
+			categories = append(categories, models.Category{ID: id})
+		}
+		db.Model(&podcast).Association("Categories").Replace(&categories)
+	}
+
+	if topicIDs != "" {
+		var topics []models.Topic
+		for _, id := range splitAndParseUUIDs(topicIDs) {
+			topics = append(topics, models.Topic{ID: id})
+		}
+		db.Model(&podcast).Association("Topics").Replace(&topics)
+	}
+
+	if tagIDs != "" {
+		var tags []models.Tag
+		for _, id := range splitAndParseUUIDs(tagIDs) {
+			tags = append(tags, models.Tag{ID: id})
+		}
+		db.Model(&podcast).Association("Tags").Replace(&tags)
+	}
+
+	// ====== Lưu thay đổi ======
+	if err := db.Save(&podcast).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật podcast"})
+		return
+	}
+
+	c.JSON(http.StatusOK, podcast)
+}
+
+// splitAndParseUUIDs tách chuỗi UUID bằng dấu phẩy
+func splitAndParseUUIDs(input string) []uuid.UUID {
+	var result []uuid.UUID
+	for _, s := range strings.Split(input, ",") {
+		if id, err := uuid.Parse(strings.TrimSpace(s)); err == nil {
+			result = append(result, id)
+		}
+	}
+	return result
 }
