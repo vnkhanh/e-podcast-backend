@@ -290,6 +290,49 @@ func ChangePassword(c *gin.Context) {
 	})
 }
 
+func AdminGetLecturers(c *gin.Context) {
+	db := config.DB
+
+	var lecturers []models.User
+	if err := db.Where("role = ?", models.RoleLecturer).Find(&lecturers).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi lấy danh sách giảng viên"})
+		return
+	}
+
+	// Ẩn mật khẩu
+	for i := range lecturers {
+		lecturers[i].Password = ""
+	}
+
+	c.JSON(http.StatusOK, gin.H{"lecturers": lecturers})
+}
+
+func AdminGetLecturerDetail(c *gin.Context) {
+	db := config.DB
+	id := c.Param("id")
+
+	var lecturer models.User
+	if err := db.Where("id = ? AND role = ?", id, models.RoleLecturer).First(&lecturer).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Giảng viên không tồn tại"})
+		return
+	}
+
+	lecturer.Password = ""
+	c.JSON(http.StatusOK, gin.H{"lecturer": lecturer})
+}
+
+func AdminDeleteLecturer(c *gin.Context) {
+	db := config.DB
+	id := c.Param("id")
+
+	if err := db.Where("id = ? AND role = ?", id, models.RoleLecturer).Delete(&models.User{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi xoá giảng viên"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Xoá giảng viên thành công"})
+}
+
 // type FacebookLoginInput struct {
 // 	AccessToken string `json:"access_token" binding:"required"`
 // }

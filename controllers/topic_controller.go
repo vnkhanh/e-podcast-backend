@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -17,23 +18,54 @@ func CreateTopic(c *gin.Context) {
 		Name   string `json:"name" binding:"required"`
 		Status *bool  `json:"status"` // optional
 	}
-
+	// Bind JSON từ request body
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
+		return
+	}
+	// Lấy userID từ context (nếu có)
+	var userUUID *uuid.UUID
+	userIDStr := c.GetString("user_id")
+	if userIDStr != "" {
+		parsed, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+			return
+		}
+		userUUID = &parsed
+	}
+
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên chủ đề bắt buộc"})
+		return
+	}
+
+	slugValue := slug.Make(name)
+
+	// === Kiểm tra trùng tên hoặc slug ===
+	var count int64
+	config.DB.Model(&models.Topic{}).
+		Where("LOWER(TRIM(name)) = ? OR slug = ?", strings.ToLower(name), slugValue).
+		Count(&count)
+
+	if count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên chủ đề đã tồn tại"})
 		return
 	}
 
 	topic := models.Topic{
-		Name:   input.Name,
-		Status: true, // default
-		Slug:   slug.Make(input.Name),
+		Name:      name,
+		Status:    true, // default
+		Slug:      slugValue,
+		CreatedBy: userUUID, // có thể null
 	}
 	if input.Status != nil {
 		topic.Status = *input.Status
 	}
 
 	if err := config.DB.Create(&topic).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo topic"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo chủ đề"})
 		return
 	}
 
@@ -47,7 +79,27 @@ func CreateTopic(c *gin.Context) {
 func GetTopics(c *gin.Context) {
 	var topics []models.Topic
 	query := config.DB.Model(&models.Topic{})
+	// Lấy userID và role từ context
+	userIDStr := c.GetString("user_id")
+	role := c.GetString("role")
 
+	// Lấy userID từ context (nếu có)
+	var userUUID *uuid.UUID
+	if userIDStr != "" {
+		parsed, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+			return
+		}
+		userUUID = &parsed
+	}
+
+	// Phân quyền
+	if role == string(models.RoleLecturer) { // giảng viên
+		query = query.Where("created_by = ?", userUUID)
+	} else if role == string(models.RoleAdmin) {
+		// admin: không thêm filter, lấy tất cả
+	}
 	// --- Tìm kiếm theo tên ---
 	if search := c.Query("search"); search != "" {
 		query = query.Where("name ILIKE ?", "%"+search+"%") // Postgres
@@ -110,7 +162,7 @@ func UpdateTopic(c *gin.Context) {
 
 	var topic models.Topic
 	if err := config.DB.First(&topic, "id = ?", topicID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy topic"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy chủ đề"})
 		return
 	}
 
@@ -119,19 +171,41 @@ func UpdateTopic(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên chủ đề bắt buộc"})
 		return
 	}
 
-	topic.Name = input.Name
-	topic.Slug = slug.Make(input.Name)
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên chủ đề không được trống"})
+		return
+	}
+
+	slugValue := slug.Make(name)
+
+	// === Kiểm tra trùng tên hoặc slug với các topic khác ===
+	var count int64
+	config.DB.Model(&models.Topic{}).
+		Where("(LOWER(TRIM(name)) = ? OR slug = ?) AND id <> ?", strings.ToLower(name), slugValue, topicID).
+		Count(&count)
+
+	if count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên hoặc slug chủ đề đã tồn tại"})
+		return
+	}
+
+	topic.Name = name
+	topic.Slug = slugValue
 
 	if err := config.DB.Save(&topic).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật topic"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật chủ đề"})
 		return
 	}
 
-	c.JSON(http.StatusOK, topic)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật chủ đề thành công",
+		"topic":   topic,
+	})
 }
 
 // Toggle status

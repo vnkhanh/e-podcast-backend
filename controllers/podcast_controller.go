@@ -277,6 +277,22 @@ func FormatSecondsToHHMMSS(seconds int) string {
 func GetPodcasts(c *gin.Context) {
 	var podcasts []models.Podcast
 	query := config.DB.Model(&models.Podcast{})
+	// Lấy userID và role từ context
+	userIDStr := c.GetString("user_id")
+	role := c.GetString("role")
+
+	userUUID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+		return
+	}
+	// Phân quyền
+	if role == string(models.RoleLecturer) { // giảng viên
+		query = query.Where("created_by = ?", userUUID)
+	} else if role == string(models.RoleAdmin) {
+		// admin: không thêm filter, lấy tất cả
+	}
+
 	// --- Tìm kiếm theo tên ---
 	if search := c.Query("search"); search != "" {
 		query = query.Where("title ILIKE ?", "%"+search+"%") // Postgres

@@ -48,6 +48,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		subjects.PUT("/:id", controllers.UpdateSubject)
 		subjects.DELETE("/:id", controllers.DeleteSubject)
 		subjects.PATCH("/:id/toggle-status", controllers.ToggleSubjectStatus)
+		subjects.GET("/:id/chapters", controllers.ListChaptersBySubject)
+		subjects.POST("/:id/chapters", controllers.CreateChapter)
 	}
 
 	// ==================== Quản lý chủ đề ====================
@@ -101,6 +103,9 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	account := admin.Group("/account")
 	{
 		account.POST("", controllers.AdminCreateLecturer)
+		account.GET("", controllers.AdminGetLecturers)
+		account.GET("/:id", controllers.AdminGetLecturerDetail)
+		account.DELETE("/:id", controllers.AdminDeleteLecturer)
 	}
 
 	// ==================== Quản lý chương (tạm ẩn nếu chưa dùng) ====================

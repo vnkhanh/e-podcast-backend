@@ -147,6 +147,26 @@ func UploadDocument(c *gin.Context) {
 func GetDocuments(c *gin.Context) {
 	var documents []models.Document
 	query := config.DB.Model(&models.Document{})
+	// Lấy userID và role từ context
+	userIDStr := c.GetString("user_id")
+	role := c.GetString("role")
+
+	var userUUID *uuid.UUID
+	if userIDStr != "" {
+		parsed, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+			return
+		}
+		userUUID = &parsed
+	}
+
+	// Phân quyền
+	if role == string(models.RoleLecturer) { // giảng viên
+		query = query.Where("user_id = ?", userUUID)
+	} else if role == string(models.RoleAdmin) {
+		// admin: không thêm filter, lấy tất cả
+	}
 
 	// lọc theo trạng thái
 	if status := c.Query("status"); status != "" {
