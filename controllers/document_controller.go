@@ -1,7 +1,8 @@
 package controllers
 
 import (
-	"fmt"
+	"log"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -22,7 +23,6 @@ func UploadDocument(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	userIDStr := c.GetString("user_id")
 
-	// Convert user_id từ string -> uuid.UUID
 	uid, err := uuid.Parse(userIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
@@ -47,14 +47,12 @@ func UploadDocument(c *gin.Context) {
 	}
 
 	docID := uuid.New()
-
 	publicURL, err := utils.UploadFileToSupabase(file, docID.String())
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi upload Supabase", "details": err.Error()})
 		return
 	}
 
-	// Tạo Document
 	doc := models.Document{
 		ID:           docID,
 		OriginalName: file.Filename,
@@ -69,73 +67,82 @@ func UploadDocument(c *gin.Context) {
 		return
 	}
 
-	ws.BroadcastDocumentListChanged()
-	// Update document sau khi trích xuất
-	db.Model(&doc).Updates(map[string]interface{}{
-		"status": "Đang trích xuất",
-	})
-	ws.BroadcastDocumentListChanged()
-	// Bắt đầu trích xuất
+	// === Hàm tiện ích cập nhật trạng thái & gửi WS ===
+	lastStatus := ""
+	lastProgress := 0.0
+
+	updateStatus := func(status string, progress float64, errorMsg string) {
+		// Gửi WS chỉ khi thật sự có thay đổi đáng kể
+		if status != lastStatus || math.Abs(progress-lastProgress) >= 5 || errorMsg != "" {
+			db.Model(&doc).Updates(map[string]interface{}{
+				"status":   status,
+				"progress": progress,
+			})
+			ws.SendStatusUpdate(doc.ID.String(), status, progress, errorMsg)
+			ws.BroadcastDocumentListChanged()
+			log.Printf("[Document %s] %s - %.0f%%", doc.OriginalName, status, progress)
+
+			lastStatus = status
+			lastProgress = progress
+		}
+	}
+
+	// --- Bắt đầu quy trình xử lý ---
+	updateStatus("Đã tải lên", 0, "")
+
+	// --- Trích xuất nội dung ---
+	updateStatus("Đang trích xuất", 10, "")
 	noiDung, err := services.NormalizeInput(services.InputSource{
 		Type:       inputType,
 		FileHeader: file,
 	})
 	if err != nil {
-		db.Model(&doc).Updates(map[string]interface{}{
-			"status": "Lỗi",
-		})
-		ws.BroadcastDocumentListChanged()
+		updateStatus("Lỗi", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể trích xuất nội dung", "details": err.Error()})
 		return
 	}
 
 	cleanedContent, err := services.CleanTextPipeline(noiDung)
 	if err != nil {
-		db.Model(&doc).Updates(map[string]interface{}{
-			"status": "Lỗi",
-		})
-		ws.BroadcastDocumentListChanged()
+		updateStatus("Lỗi", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể làm sạch nội dung", "details": err.Error()})
 		return
 	}
 
-	// Log nội dung đã làm sạch
-	fmt.Println("Nội dung đã làm sạch: ", cleanedContent)
+	// Progress mượt từ 10 → 50
+	for p := 15; p <= 50; p += 10 {
+		updateStatus("Đang trích xuất", float64(p), "")
+		time.Sleep(200 * time.Millisecond)
+	}
+	db.Model(&doc).Update("extracted_text", cleanedContent)
 
-	// Update document sau khi trích xuất
-	db.Model(&doc).Updates(map[string]interface{}{
-		"status":         "Đã trích xuất",
-		"extracted_text": cleanedContent,
-	})
-	ws.BroadcastDocumentListChanged()
-	// Update document sau khi trích xuất
-	db.Model(&doc).Updates(map[string]interface{}{
-		"status": "Đang tạo audio",
-	})
-	ws.BroadcastDocumentListChanged()
-	// === Sinh audio từ nội dung đã làm sạch (VITS) ===
+	// --- Tạo audio ---
+	updateStatus("Đang tạo audio", 55, "")
 	audioURL, err := utils.CallVITSTTS(cleanedContent)
 	if err != nil {
-		db.Model(&doc).Updates(map[string]interface{}{
-			"status": "Lỗi tạo audio",
-		})
-		ws.BroadcastDocumentListChanged()
+		updateStatus("Lỗi tạo audio", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "Không thể tạo audio từ VITS",
 			"details": err.Error(),
 		})
 		return
 	}
-	// Coi như đã xử lý xong (chưa sinh audio)
+
+	// Tiến trình mượt 55 → 95
+	for p := 60; p < 95; p += 10 {
+		updateStatus("Đang tạo audio", float64(p), "")
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	// --- Hoàn tất ---
+	updateStatus("Hoàn thành", 100, "")
 	now := time.Now()
 	db.Model(&doc).Updates(map[string]interface{}{
+		"audio_url":    audioURL,
 		"status":       "Hoàn thành",
 		"processed_at": &now,
 	})
 
-	ws.BroadcastDocumentListChanged()
-
-	// Load lại để trả JSON về cho client
 	db.Preload("User").First(&doc, "id = ?", doc.ID)
 	c.JSON(http.StatusOK, gin.H{
 		"message":   "Tải lên thành công",

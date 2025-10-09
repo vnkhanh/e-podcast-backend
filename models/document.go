@@ -16,6 +16,7 @@ type Document struct {
 	FileSize      int64      `json:"file_size"` // bytes
 	ExtractedText string     `gorm:"type:text" json:"extracted_text"`
 	Status        string     `gorm:"size:30;default:'Đang tải lên'" json:"status"` // Đang tải lên|Đã tải lên|Đang trích xuất|Đã trích xuất|Đang tạo podcast|Hoàn thành|Lỗi
+	Progress      float64    `gorm:"default:0" json:"progress"`                    // 0-100%
 	ProcessedAt   *time.Time `json:"processed_at"`                                 // thời gian hoàn thành trích xuất và tạo podcast
 	CreatedAt     time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt     time.Time  `gorm:"autoUpdateTime" json:"updated_at"`

@@ -97,19 +97,32 @@ func (h *Hub) BroadcastGlobal(messageType int, data []byte) {
 }
 
 // Public function gọi gửi status tài liệu
+// Gửi trạng thái document (status + progress + error)
+// docID: ID tài liệu
+// status: trạng thái hiện tại
+// progress: % tiến trình (0-100)
+// errorMsg: lỗi nếu có
 func SendStatusUpdate(docID, status string, progress float64, errorMsg string) {
-	update := DocumentStatusUpdate{
-		DocumentID: docID,
-		Status:     status,
-		Progress:   progress,
-		Error:      errorMsg,
+	update := map[string]interface{}{
+		"type":        "document_status_update",
+		"document_id": docID,
+		"status":      status,
+		"progress":    progress,
 	}
+	if errorMsg != "" {
+		update["error"] = errorMsg
+	}
+
 	data, err := json.Marshal(update)
 	if err != nil {
 		log.Println("JSON marshal error:", err)
 		return
 	}
+
+	// Gửi tới client đang xem document
 	H.Broadcast(docID, websocket.TextMessage, data)
+	// Gửi luôn tới global client (danh sách document)
+	H.BroadcastGlobal(websocket.TextMessage, data)
 }
 
 // Public function gửi signal cập nhật danh sách tài liệu
