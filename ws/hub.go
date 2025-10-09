@@ -157,11 +157,24 @@ func (h *Hub) readPump(docID string, conn *websocket.Conn) {
 
 // Write pump riêng theo documentID
 func (h *Hub) writePump(docID string, conn *websocket.Conn) {
-	client := h.Clients[docID][conn]
+	h.Mutex.RLock()
+	clientsMap, ok := h.Clients[docID]
+	if !ok {
+		h.Mutex.RUnlock()
+		return
+	}
+	client, ok := clientsMap[conn]
+	h.Mutex.RUnlock()
+	if !ok {
+		return
+	}
+
 	defer func() {
 		conn.WriteMessage(websocket.CloseMessage, []byte{})
 		conn.Close()
+		h.Unregister(docID, conn)
 	}()
+
 	for msg := range client.Send {
 		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			break
@@ -181,11 +194,20 @@ func (h *Hub) readGlobalPump(conn *websocket.Conn) {
 
 // Write pump global
 func (h *Hub) writeGlobalPump(conn *websocket.Conn) {
-	client := h.GlobalClients[conn]
+	h.Mutex.RLock()
+	client, ok := h.GlobalClients[conn]
+	h.Mutex.RUnlock()
+	if !ok {
+		// client chưa được đăng ký hoặc đã bị xóa
+		return
+	}
+
 	defer func() {
 		conn.WriteMessage(websocket.CloseMessage, []byte{})
 		conn.Close()
+		h.UnregisterGlobal(conn)
 	}()
+
 	for msg := range client.Send {
 		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			break

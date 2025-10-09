@@ -1,13 +1,20 @@
 package controllers
 
 import (
+	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"cloud.google.com/go/auth/credentials/idtoken"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 
 	"github.com/vnkhanh/e-podcast-backend/config"
 	"github.com/vnkhanh/e-podcast-backend/models"
@@ -25,6 +32,9 @@ type LoginInput struct {
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required"`
 }
+
+// Helper tạo con trỏ bool
+func BoolPtr(b bool) *bool { return &b }
 
 // ====== HANDLERS ======
 func Register(c *gin.Context) {
@@ -55,6 +65,7 @@ func Register(c *gin.Context) {
 		Email:    input.Email,
 		Password: string(hashed),
 		Role:     models.RoleUser,
+		Status:   BoolPtr(true), // default true
 	}
 
 	if err := config.DB.Create(&newUser).Error; err != nil {
@@ -140,6 +151,7 @@ func GoogleLogin(c *gin.Context) {
 			Email:    email,
 			FullName: fullName,
 			Role:     models.RoleUser,
+			Status:   BoolPtr(true), // default true
 			// Password để trống vì login Google
 		}
 		if err := config.DB.Create(&user).Error; err != nil {
@@ -164,6 +176,84 @@ func GoogleLogin(c *gin.Context) {
 			"role":      user.Role,
 		},
 	})
+}
+
+// ========== QUÊN MẬT KHẨU ==========
+// ForgotPassword tạo JWT token gửi qua email
+func ForgotPassword(c *gin.Context) {
+	type Request struct {
+		Email string `json:"email" binding:"required,email"`
+	}
+	var req Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	db := config.DB
+	var user models.User
+	if err := db.Where("email = ?", req.Email).First(&user).Error; err != nil {
+		// Không lộ email tồn tại hay không
+		c.JSON(http.StatusOK, gin.H{"message": "Nếu email tồn tại, link đổi mật khẩu đã được gửi"})
+		return
+	}
+
+	// ===== Tạo JWT reset token =====
+	secret := []byte(os.Getenv("JWT_SECRET"))
+	expiresAt := time.Now().Add(15 * time.Minute) // token hết hạn sau 15 phút
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID.String(),
+		"exp":     expiresAt.Unix(),
+	})
+	resetToken, _ := token.SignedString(secret)
+
+	// ===== Tạo link và body email =====
+	link := fmt.Sprintf(`%s/auth/reset-password?token=%s`, os.Getenv("FE_BASE_URL"), resetToken)
+	body := fmt.Sprintf(`
+	<p>Click vào link dưới đây để đổi mật khẩu:</p>
+	<p><a href="%s">Đổi mật khẩu</a></p>
+	<p>Token này sẽ hết hạn vào <b>%s</b></p>
+	<p>Nếu bạn không yêu cầu đổi mật khẩu, hãy bỏ qua email này.</p>
+	`, link, expiresAt.Format("02/01/2006 15:04")) // định dạng: dd/mm/yyyy HH:mm
+
+	// ===== Gửi email =====
+	if err := utils.SendEmail(user.Email, "Quên mật khẩu", body); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể gửi email"})
+		return
+	}
+
+	// ===== Trả response =====
+	c.JSON(http.StatusOK, gin.H{"message": "Nếu email tồn tại, link đổi mật khẩu đã được gửi"})
+
+}
+
+// ResetPassword dùng token JWT để cập nhật mật khẩu
+func ResetPassword(c *gin.Context) {
+	type Request struct {
+		Token       string `json:"token" binding:"required"`
+		NewPassword string `json:"new_password" binding:"required,min=6"`
+	}
+	var req Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	secret := []byte(os.Getenv("JWT_SECRET"))
+	parsedToken, err := jwt.Parse(req.Token, func(token *jwt.Token) (interface{}, error) { return secret, nil })
+	if err != nil || !parsedToken.Valid {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token không hợp lệ hoặc hết hạn"})
+		return
+	}
+
+	claims := parsedToken.Claims.(jwt.MapClaims)
+	userID := claims["user_id"].(string)
+
+	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	db := config.DB
+	db.Model(&models.User{}).Where("id = ?", userID).Update("password", string(hashed))
+
+	c.JSON(http.StatusOK, gin.H{"message": "Đổi mật khẩu thành công"})
 }
 
 // ==== ADMIN TẠO GIẢNG VIÊN ====
@@ -206,6 +296,7 @@ func AdminCreateLecturer(c *gin.Context) {
 		Email:    input.Email,
 		Password: string(hashed),
 		Role:     models.RoleLecturer,
+		Status:   BoolPtr(true), // default true
 	}
 
 	if err := config.DB.Create(&newUser).Error; err != nil {
@@ -290,47 +381,179 @@ func ChangePassword(c *gin.Context) {
 	})
 }
 
-func AdminGetLecturers(c *gin.Context) {
+func AdminGetUsers(c *gin.Context) {
 	db := config.DB
 
-	var lecturers []models.User
-	if err := db.Where("role = ?", models.RoleLecturer).Find(&lecturers).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi lấy danh sách giảng viên"})
+	// --- Lấy query params ---
+	name := c.Query("name")
+	role := c.Query("role")
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+
+	page, _ := strconv.Atoi(pageStr)
+	limit, _ := strconv.Atoi(limitStr)
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 10
+	}
+
+	var users []models.User
+	query := db.Model(&models.User{})
+
+	// --- Chỉ lấy student và teacher ---
+	query = query.Where("role IN ?", []models.UserRole{models.RoleUser, models.RoleLecturer})
+
+	// --- Lọc theo tên ---
+	if name != "" {
+		query = query.Where("full_name LIKE ?", "%"+name+"%")
+	}
+
+	// --- Lọc theo role (nếu có) ---
+	if role != "" {
+		if role == string(models.RoleLecturer) || role == string(models.RoleUser) {
+			query = query.Where("role = ?", role)
+		}
+	}
+
+	// --- Đếm tổng số bản ghi ---
+	var total int64
+	query.Count(&total)
+
+	// --- Phân trang ---
+	offset := (page - 1) * limit
+	if err := query.
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&users).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi lấy danh sách người dùng"})
+		return
+	}
+
+	// --- Ẩn mật khẩu ---
+	for i := range users {
+		users[i].Password = ""
+	}
+
+	// --- Trả JSON ---
+	c.JSON(http.StatusOK, gin.H{
+		"users": users,
+		"pagination": gin.H{
+			"page":      page,
+			"limit":     limit,
+			"total":     total,
+			"totalPage": int(math.Ceil(float64(total) / float64(limit))),
+		},
+	})
+}
+
+func AdminGetUserDetail(c *gin.Context) {
+	db := config.DB
+	userID := c.Param("id")
+
+	// Parse UUID
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID người dùng không hợp lệ"})
+		return
+	}
+
+	var user models.User
+	if err := db.Preload("Documents").
+		Preload("Favorites").
+		Preload("Notes").
+		Preload("Flashcards").
+		First(&user, "id = ?", id).Error; err != nil {
+
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy người dùng"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi lấy thông tin người dùng"})
 		return
 	}
 
 	// Ẩn mật khẩu
-	for i := range lecturers {
-		lecturers[i].Password = ""
-	}
+	user.Password = ""
 
-	c.JSON(http.StatusOK, gin.H{"lecturers": lecturers})
+	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
-func AdminGetLecturerDetail(c *gin.Context) {
+func AdminDeleteUser(c *gin.Context) {
 	db := config.DB
-	id := c.Param("id")
+	userID := c.Param("id")
 
-	var lecturer models.User
-	if err := db.Where("id = ? AND role = ?", id, models.RoleLecturer).First(&lecturer).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Giảng viên không tồn tại"})
+	// Parse UUID
+	id, err := uuid.Parse(userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID người dùng không hợp lệ"})
 		return
 	}
 
-	lecturer.Password = ""
-	c.JSON(http.StatusOK, gin.H{"lecturer": lecturer})
-}
-
-func AdminDeleteLecturer(c *gin.Context) {
-	db := config.DB
-	id := c.Param("id")
-
-	if err := db.Where("id = ? AND role = ?", id, models.RoleLecturer).Delete(&models.User{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi xoá giảng viên"})
+	// Tìm user
+	var user models.User
+	if err := db.First(&user, "id = ?", id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy người dùng"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi truy vấn người dùng"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Xoá giảng viên thành công"})
+	// Không cho xoá admin
+	if user.Role == models.RoleAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Không thể xoá tài khoản admin"})
+		return
+	}
+
+	// Xoá người dùng (tự động xoá liên kết nếu có OnDelete:CASCADE)
+	if err := db.Delete(&user).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi xoá người dùng"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Xoá người dùng thành công",
+		"user_id": user.ID,
+	})
+}
+
+// PATCH /admin/users/:id/toggle-status
+func ToggleUserStatus(c *gin.Context) {
+	idParam := c.Param("id")
+	userID, err := uuid.Parse(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	var user models.User
+	if err := config.DB.First(&user, "id = ?", userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy người dùng"})
+		return
+	}
+
+	// đảo trạng thái
+	if user.Status == nil {
+		defaultStatus := true
+		user.Status = &defaultStatus
+	} else {
+		v := !*user.Status
+		user.Status = &v
+	}
+
+	if err := config.DB.Save(&user).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật trạng thái thành công",
+		"user":    user,
+	})
 }
 
 // type FacebookLoginInput struct {

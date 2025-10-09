@@ -22,6 +22,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		auth.POST("/login", controllers.Login)
 		auth.POST("/logingoogle", controllers.GoogleLogin)
 		auth.PUT("/change-password", controllers.ChangePassword)
+		auth.POST("/forgot-password", controllers.ForgotPassword)
+		auth.POST("/reset-password", controllers.ResetPassword)
 		// auth.POST("/loginfacebook", controllers.FacebookLogin)
 	}
 
@@ -102,12 +104,13 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	{
 		tags.GET("", controllers.GetTags)
 	}
-	account := admin.Group("/account")
+	users := admin.Group("/users")
 	{
-		account.POST("", controllers.AdminCreateLecturer)
-		account.GET("", controllers.AdminGetLecturers)
-		account.GET("/:id", controllers.AdminGetLecturerDetail)
-		account.DELETE("/:id", controllers.AdminDeleteLecturer)
+		users.POST("", controllers.AdminCreateLecturer)
+		users.GET("", controllers.AdminGetUsers)
+		users.GET("/:id", controllers.AdminGetUserDetail)
+		users.DELETE("/:id", controllers.AdminDeleteUser)
+		users.PATCH("/:id/toggle-status", controllers.ToggleUserStatus)
 	}
 
 	// ==================== Quản lý chương (tạm ẩn nếu chưa dùng) ====================

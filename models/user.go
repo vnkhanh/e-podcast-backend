@@ -22,6 +22,7 @@ type User struct {
 	Role      UserRole  `gorm:"type:varchar(20);not null;default:'student'" json:"role"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	Status    *bool     `gorm:"type:boolean" json:"status"`
 
 	// Quan hệ
 	Documents  []Document  `json:"documents"`
