@@ -237,9 +237,24 @@ func DeleteDocument(c *gin.Context) {
 		return
 	}
 
-	if err := config.DB.Delete(&models.Document{}, "id = ?", documentID).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa tào liệu"})
+	var document models.Document
+	if err := config.DB.First(&document, "id = ?", documentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy tài liệu"})
 		return
+	}
+
+	// Xóa khỏi DB
+	if err := config.DB.Delete(&document).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa tài liệu"})
+		return
+	}
+
+	// Xóa file trên Supabase (nếu có)
+	if document.FilePath != "" {
+		if err := utils.DeleteFileFromSupabase(document.FilePath); err != nil {
+			log.Printf("Lỗi xóa file trên Supabase: %v", err)
+			// Không trả về lỗi vì document đã bị xóa khỏi DB
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Xóa thành công"})

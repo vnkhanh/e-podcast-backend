@@ -3,7 +3,9 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -591,4 +593,95 @@ func splitAndParseUUIDs(input string) []uuid.UUID {
 		}
 	}
 	return result
+}
+
+// Lấy danh sách podcast theo slug category (chỉ podcast đã publish)
+func GetPodcastsByCategory(c *gin.Context) {
+	slug := c.Param("slug")
+
+	// 1. Tìm category theo slug
+	var category models.Category
+	if err := config.DB.First(&category, "slug = ?", slug).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy danh mục"})
+		return
+	}
+
+	// 2. Đọc query params
+	pageStr := c.DefaultQuery("page", "1")
+	limitStr := c.DefaultQuery("limit", "10")
+	sort := c.DefaultQuery("sort", "latest") // latest | popular | duration
+	search := strings.TrimSpace(c.DefaultQuery("search", ""))
+
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+	offset := (page - 1) * limit
+
+	// 3. Câu query gốc
+	query := config.DB.
+		Model(&models.Podcast{}).
+		Joins("JOIN podcast_categories pc ON pc.podcast_id = podcasts.id").
+		Where("pc.category_id = ?", category.ID).
+		Where("podcasts.status = ?", "published")
+
+	// 4. Lọc theo từ khóa (search theo tiêu đề hoặc mô tả)
+	if search != "" {
+		likeSearch := "%" + search + "%"
+		query = query.Where("podcasts.title ILIKE ? OR podcasts.description ILIKE ?", likeSearch, likeSearch)
+	}
+
+	// 5. Đếm tổng số podcast
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đếm số lượng podcast"})
+		return
+	}
+
+	// 6. Xử lý sắp xếp (sort)
+	switch sort {
+	case "popular":
+		query = query.Order("podcasts.view_count DESC")
+	case "duration":
+		query = query.Order("podcasts.duration_sec DESC")
+	default:
+		query = query.Order("podcasts.created_at DESC")
+	}
+
+	// 7. Lấy dữ liệu với preload
+	var podcasts []models.Podcast
+	if err := query.
+		Preload("Chapter").
+		Preload("Document").
+		Preload("Categories").
+		Limit(limit).
+		Offset(offset).
+		Find(&podcasts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách podcast"})
+		return
+	}
+
+	// 8. Trả JSON kết quả
+	c.JSON(http.StatusOK, gin.H{
+		"category": gin.H{
+			"id":   category.ID,
+			"name": category.Name,
+			"slug": category.Slug,
+		},
+		"pagination": gin.H{
+			"page":       page,
+			"limit":      limit,
+			"total":      total,
+			"totalPages": int(math.Ceil(float64(total) / float64(limit))),
+		},
+		"filters": gin.H{
+			"sort":   sort,
+			"search": search,
+		},
+		"podcasts": podcasts,
+	})
 }

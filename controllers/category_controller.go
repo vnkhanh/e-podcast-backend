@@ -240,3 +240,42 @@ func GetCategoriesGet(c *gin.Context) {
 
 	c.JSON(http.StatusOK, categories)
 }
+
+// /////USER
+type CategoryWithCount struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Slug      string `json:"slug"`
+	Status    bool   `json:"status"`
+	Count     int64  `json:"podcast_count"`
+	CreatedAt string `json:"created_at"`
+}
+
+func GetCategoriesUser(c *gin.Context) {
+	var categories []models.Category
+
+	// Lấy category có podcast đã publish
+	if err := config.DB.
+		Preload("Podcasts", "status = ?", "published").
+		Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách categories"})
+		return
+	}
+
+	var result []CategoryWithCount
+	for _, cat := range categories {
+		if len(cat.Podcasts) == 0 {
+			continue // bỏ qua category chưa có podcast publish
+		}
+		result = append(result, CategoryWithCount{
+			ID:        cat.ID.String(),
+			Name:      cat.Name,
+			Slug:      cat.Slug,
+			Status:    cat.Status,
+			Count:     int64(len(cat.Podcasts)),
+			CreatedAt: cat.CreatedAt.Format("2006-01-02 15:04:05"),
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"categories": result})
+}

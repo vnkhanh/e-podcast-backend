@@ -29,10 +29,14 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 
 	user := api.Group("/user")
 	{
-		user.Use(middleware.AuthMiddleware(), middleware.DBMiddleware(db))
-		// TODO: thêm các route cho user
+		user.Use(middleware.DBMiddleware(db))
+		account := user.Group("/account")
+		{
+			account.Use(middleware.AuthMiddleware())
+		}
+		user.GET("/categories", controllers.GetCategoriesUser)
+		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)
 	}
-
 	admin := api.Group("/admin")
 	admin.Use(
 		middleware.AuthMiddleware(),
