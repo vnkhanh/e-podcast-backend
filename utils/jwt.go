@@ -20,13 +20,13 @@ func GenerateToken(userID string, role string) (string, error) {
 	if len(jwtKey) == 0 {
 		return "", errors.New("JWT_SECRET không được thiết lập")
 	}
-
+	now := time.Now().UTC()
 	claims := JWTClaims{
 		UserID: userID,
 		Role:   role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(now.Add(7 * 24 * time.Hour)), // 24h từ thời điểm UTC hiện tại
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 

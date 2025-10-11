@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -595,6 +596,7 @@ func splitAndParseUUIDs(input string) []uuid.UUID {
 	return result
 }
 
+/*============= USER =============*/
 // Lấy danh sách podcast theo slug category (chỉ podcast đã publish)
 func GetPodcastsByCategory(c *gin.Context) {
 	slug := c.Param("slug")
@@ -683,5 +685,59 @@ func GetPodcastsByCategory(c *gin.Context) {
 			"search": search,
 		},
 		"podcasts": podcasts,
+	})
+}
+
+// GetFeaturedPodcasts trả về danh sách podcast nổi bật (7 ngày gần đây, sắp theo lượt thích & lượt nghe)
+func GetFeaturedPodcasts(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	sevenDaysAgo := time.Now().AddDate(0, 0, -7)
+
+	var podcasts []models.Podcast
+
+	// Lấy podcast được tạo trong 7 ngày gần đây, trạng thái published
+	if err := db.
+		Where("status = ?", "published").
+		Where("created_at >= ?", sevenDaysAgo).
+		Preload("Chapter").
+		Preload("Document").
+		Preload("Categories").
+		Order("like_count DESC, view_count DESC").
+		Limit(10).
+		Find(&podcasts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách podcast nổi bật"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Danh sách podcast nổi bật",
+		"podcasts": podcasts,
+	})
+}
+
+// GetPodcastByID - Lấy chi tiết 1 podcast
+func GetPodcastByID(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	id := c.Param("id")
+
+	var podcast models.Podcast
+	if err := db.Preload("Chapter").
+		Preload("Document").
+		Preload("Categories").
+		Preload("Topics").
+		Preload("Tags").
+		First(&podcast, "id = ?", id).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi truy vấn dữ liệu"})
+		}
+		return
+	}
+
+	// Trả về JSON
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Lấy chi tiết podcast thành công",
+		"data":    podcast,
 	})
 }
