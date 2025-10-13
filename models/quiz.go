@@ -17,7 +17,7 @@ type QuizQuestion struct {
 	Question   string       `gorm:"type:text;not null" json:"question"`
 	Difficulty string       `gorm:"size:20;default:'easy'" json:"difficulty"`
 	CreatedAt  time.Time    `gorm:"autoCreateTime" json:"created_at"`
-	Options    []QuizOption `gorm:"foreignKey:QuestionID"`
+	Options    []QuizOption `gorm:"foreignKey:QuestionID;constraint:OnDelete:CASCADE;"`
 }
 
 type QuizOption struct {

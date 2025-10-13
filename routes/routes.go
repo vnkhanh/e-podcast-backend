@@ -42,6 +42,13 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/podcasts/:id/flashcards", middleware.AuthMiddleware(), controllers.GetFlashcardsByPodcast)
 		user.GET("/documents/:id", controllers.GetDocumentDetail)
 
+		// Quiz routes
+		user.POST("/documents/:id/quizzes", middleware.AuthMiddleware(), controllers.GenerateQuizzesFromDocument)
+		user.GET("/podcasts/:id/quizzes", middleware.AuthMiddleware(), controllers.GetQuizQuestions)
+		user.POST("/podcasts/:id/quiz/submit", middleware.AuthMiddleware(), controllers.SubmitQuizAttempt)
+		user.GET("/quiz/attempt", middleware.AuthMiddleware(), controllers.GetUserQuizAttempts)
+		user.GET("/quiz/:attempt_id", middleware.AuthMiddleware(), controllers.GetQuizAttemptDetail)
+
 	}
 	admin := api.Group("/admin")
 	admin.Use(

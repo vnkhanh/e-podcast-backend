@@ -114,7 +114,7 @@ func GenerateFlashcardsFromDocument(c *gin.Context) {
 		podcastID = uuid.Nil
 	}
 
-	// 🔥 XÓA FLASHCARD CŨ TRƯỚC KHI TẠO MỚI
+	// XÓA FLASHCARD CŨ TRƯỚC KHI TẠO MỚI
 	if err := db.
 		Where("user_id = ? AND podcast_id = ?", userUUID, podcastID).
 		Delete(&models.Flashcard{}).Error; err != nil {
@@ -123,7 +123,7 @@ func GenerateFlashcardsFromDocument(c *gin.Context) {
 	}
 
 	allFlashcards := []models.Flashcard{}
-	const maxFlashcards = 50 // 🔥 giới hạn tối đa
+	const maxFlashcards = 50 // giới hạn tối đa
 
 	for idx, chunk := range chunks {
 		if len(allFlashcards) >= maxFlashcards {
