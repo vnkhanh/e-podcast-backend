@@ -40,6 +40,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/podcasts/:id", controllers.GetPodcastByID)
 		user.POST("/documents/:id/flashcards", middleware.AuthMiddleware(), controllers.GenerateFlashcardsFromDocument)
 		user.GET("/podcasts/:id/flashcards", middleware.AuthMiddleware(), controllers.GetFlashcardsByPodcast)
+		user.GET("/documents/:id", controllers.GetDocumentDetail)
+
 	}
 	admin := api.Group("/admin")
 	admin.Use(

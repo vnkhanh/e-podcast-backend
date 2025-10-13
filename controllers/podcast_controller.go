@@ -698,7 +698,7 @@ func GetFeaturedPodcasts(c *gin.Context) {
 	// Lấy podcast được tạo trong 7 ngày gần đây, trạng thái published
 	if err := db.
 		Where("status = ?", "published").
-		Where("created_at >= ?", sevenDaysAgo).
+		Where("published_at >= ?", sevenDaysAgo).
 		Preload("Chapter").
 		Preload("Document").
 		Preload("Categories").
