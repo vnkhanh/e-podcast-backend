@@ -16,6 +16,7 @@ type QuizQuestion struct {
 
 	Question   string       `gorm:"type:text;not null" json:"question"`
 	Difficulty string       `gorm:"size:20;default:'easy'" json:"difficulty"`
+	SourceText string       `gorm:"type:text" json:"source_text"`
 	CreatedAt  time.Time    `gorm:"autoCreateTime" json:"created_at"`
 	Options    []QuizOption `gorm:"foreignKey:QuestionID;constraint:OnDelete:CASCADE;"`
 }
@@ -36,4 +37,20 @@ type QuizAttempt struct {
 	Podcast   Podcast   `gorm:"constraint:OnDelete:CASCADE;"`
 	Score     float64   `gorm:"type:numeric(5,2)" json:"score"`
 	TakenAt   time.Time `gorm:"autoCreateTime" json:"taken_at"`
+}
+
+type AnswerResult struct {
+	QuestionID uuid.UUID       `json:"question_id"`
+	Question   string          `json:"question"`
+	SelectedID uuid.UUID       `json:"selected_id"`
+	CorrectID  uuid.UUID       `json:"correct_id"`
+	IsCorrect  bool            `json:"is_correct"`
+	SourceText string          `json:"source_text"`
+	Options    []QuizOptionDTO `json:"options"`
+}
+
+type QuizOptionDTO struct {
+	ID         uuid.UUID `json:"id"`
+	OptionText string    `json:"option_text"`
+	IsCorrect  bool      `json:"is_correct"`
 }

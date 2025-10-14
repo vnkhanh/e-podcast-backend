@@ -136,6 +136,7 @@ Mỗi câu hỏi có dạng JSON như sau:
 				PodcastID:  podcastID,
 				CreatedBy:  userUUID,
 				Question:   qa.Question,
+				SourceText: chunk,
 				Difficulty: qa.Difficulty,
 				CreatedAt:  time.Now(),
 			}
@@ -298,14 +299,50 @@ func SubmitQuizAttempt(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu kết quả quiz"})
 		return
 	}
+	var results []models.AnswerResult
+	for _, ans := range body.Answers {
+		var q models.QuizQuestion
+		db.Preload("Options").First(&q, "id = ?", ans.QuestionID)
+
+		var correct uuid.UUID
+		var selected uuid.UUID = ans.SelectedOptionID
+		for _, o := range q.Options {
+			if o.IsCorrect {
+				correct = o.ID
+				break
+			}
+		}
+
+		// Build options DTO
+		optionsDTO := []models.QuizOptionDTO{}
+		for _, o := range q.Options {
+			optionsDTO = append(optionsDTO, models.QuizOptionDTO{
+				ID:         o.ID,
+				OptionText: o.OptionText,
+				IsCorrect:  o.IsCorrect,
+			})
+		}
+
+		results = append(results, models.AnswerResult{
+			QuestionID: q.ID,
+			Question:   q.Question,
+			SelectedID: selected,
+			CorrectID:  correct,
+			IsCorrect:  selected == correct,
+			SourceText: q.SourceText,
+			Options:    optionsDTO,
+		})
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Nộp quiz thành công",
-		"total":         total,
+		"total":         len(body.Answers),
 		"correct_count": correctCount,
 		"score":         score,
 		"attempt_id":    attempt.ID,
+		"results":       results,
 	})
+
 }
 
 // 🔹 Lấy lịch sử làm quiz của user
