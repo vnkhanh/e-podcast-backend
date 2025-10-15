@@ -304,7 +304,7 @@ func GetPodcasts(c *gin.Context) {
 	}
 	// --- Lọc theo trạng thái ---
 	if status := c.Query("status"); status != "" {
-		query = query.Where("status = ?", status)
+		query = query.Where("LOWER(status) = LOWER(?)", status)
 	}
 
 	// --- Phân trang ---
