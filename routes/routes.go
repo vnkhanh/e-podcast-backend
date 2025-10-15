@@ -113,7 +113,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		podcasts.GET("", controllers.GetPodcasts)
 		podcasts.GET("/:id", controllers.GetPodcastDetail)
 		podcasts.DELETE("/:id", controllers.DeletePodcast)
-		podcasts.PUT("/:id", controllers.UpdatePodcastMetadata)
+		podcasts.PUT("/:id", controllers.UpdatePodcast)
 	}
 
 	// ==================== Quản lý tag ====================

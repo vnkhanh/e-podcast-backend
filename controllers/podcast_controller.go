@@ -175,6 +175,8 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		CreatedBy:   userUUID,
 		ViewCount:   0,
 		LikeCount:   0,
+		UpdatedBy:   &userUUID,
+		UpdatedAt:   time.Now(),
 	}
 
 	if err := db.Create(&podcast).Error; err != nil {
@@ -351,6 +353,7 @@ func GetPodcastDetail(c *gin.Context) {
 	// 2. Query podcast với preload tất cả quan hệ
 	var podcast models.Podcast
 	if err := db.Preload("Chapter").
+		Preload("Chapter.Subject").
 		Preload("Document").
 		Preload("Categories").
 		Preload("Topics").
@@ -383,10 +386,18 @@ func GetPodcastDetail(c *gin.Context) {
 		"like_count":    podcast.LikeCount,
 		"created_at":    podcast.CreatedAt,
 		"published_at":  podcast.PublishedAt,
+		"created_by":    podcast.CreatedBy,
+		"updated_at":    podcast.UpdatedAt,
+		"updated_by":    podcast.UpdatedBy,
 		"chapter": gin.H{
 			"id":    podcast.Chapter.ID,
 			"title": podcast.Chapter.Title,
+			"subject": gin.H{
+				"id":   podcast.Chapter.Subject.ID,
+				"name": podcast.Chapter.Subject.Name,
+			},
 		},
+
 		"document": gin.H{
 			"id":             podcast.Document.ID,
 			"original_name":  podcast.Document.OriginalName,
@@ -508,92 +519,159 @@ func DeletePodcast(c *gin.Context) {
 }
 
 // UpdatePodcastMetadata cập nhật thông tin metadata của podcast (không đụng tới audio, document, status, publish,...)
-func UpdatePodcastMetadata(c *gin.Context) {
+func UpdatePodcast(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
-	idStr := c.Param("id")
+	userIDStr := c.GetString("user_id")
 
-	podcastID, err := uuid.Parse(idStr)
+	userUUID, err := uuid.Parse(userIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Podcast ID không hợp lệ"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
 		return
 	}
 
+	podcastID := c.Param("id")
 	var podcast models.Podcast
-	if err := db.Preload("Categories").Preload("Topics").Preload("Tags").
-		First(&podcast, "id = ?", podcastID).Error; err != nil {
+	if err := db.Preload("Categories").Preload("Topics").Preload("Tags").First(&podcast, "id = ?", podcastID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
 		return
 	}
 
-	// Nhận dữ liệu từ form
+	// === 1 Nhận các field text ===
 	title := c.PostForm("title")
 	description := c.PostForm("description")
-	coverImage := c.PostForm("cover_image")
-	chapterID := c.PostForm("chapter_id")
-	categoryIDs := c.PostForm("category_ids")
-	topicIDs := c.PostForm("topic_ids")
-	tagIDs := c.PostForm("tag_ids")
+	status := c.PostForm("status")
 
-	// Cập nhật thông tin cơ bản
+	// === 2 Xử lý Chapter (cho phép cập nhật hoặc tự tạo mới) ===
+	chapterIDStr := c.PostForm("chapter_id")
+	subjectIDStr := c.PostForm("subject_id")
+	chapterTitle := c.PostForm("chapter_title")
+
+	var chapter models.Chapter
+	if chapterIDStr != "" {
+		chapterUUID, err := uuid.Parse(chapterIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "chapter_id không hợp lệ"})
+			return
+		}
+		if err := db.First(&chapter, "id = ?", chapterUUID).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Không tìm thấy chương"})
+			return
+		}
+		podcast.ChapterID = chapter.ID
+	} else if subjectIDStr != "" && chapterTitle != "" {
+		subjectUUID, err := uuid.Parse(subjectIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subject_id không hợp lệ"})
+			return
+		}
+
+		// Tìm hoặc tạo chương mới
+		if err := db.Where("subject_id = ? AND LOWER(title) = LOWER(?)", subjectUUID, chapterTitle).
+			First(&chapter).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				var maxOrder int
+				db.Model(&models.Chapter{}).Where("subject_id = ?", subjectUUID).
+					Select("COALESCE(MAX(sort_order), 0)").Scan(&maxOrder)
+				chapter = models.Chapter{
+					ID:        uuid.New(),
+					SubjectID: subjectUUID,
+					Title:     chapterTitle,
+					SortOrder: maxOrder + 1,
+				}
+				if err := db.Create(&chapter).Error; err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo chương mới", "details": err.Error()})
+					return
+				}
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		podcast.ChapterID = chapter.ID
+	}
+
+	// === 3 Upload cover_image mới nếu có ===
+	if coverFile, err := c.FormFile("cover_image"); err == nil {
+		imageURL, err := utils.UploadImageToSupabase(coverFile, uuid.New().String())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể upload ảnh bìa", "details": err.Error()})
+			return
+		}
+		podcast.CoverImage = imageURL
+	}
+
+	// === 5 Cập nhật các trường cơ bản ===
 	if title != "" {
 		podcast.Title = title
 	}
 	if description != "" {
 		podcast.Description = description
 	}
-	if coverImage != "" {
-		podcast.CoverImage = coverImage
+	if status != "" {
+		podcast.Status = status
+	}
+	podcast.UpdatedBy = &userUUID
+	podcast.UpdatedAt = time.Now()
+
+	// === 6 Cập nhật Category / Topic / Tag ===
+	categoryIDs := c.PostFormArray("category_ids[]")
+	topicIDs := c.PostFormArray("topic_ids[]")
+	tagIDs := c.PostFormArray("tag_ids[]")
+	tagNames := c.PostFormArray("tag_names[]")
+
+	var categories []models.Category
+	var topics []models.Topic
+	var tags []models.Tag
+
+	db.Model(&podcast).Association("Categories").Clear()
+	db.Model(&podcast).Association("Topics").Clear()
+	db.Model(&podcast).Association("Tags").Clear()
+
+	if len(categoryIDs) > 0 {
+		db.Where("id IN ?", categoryIDs).Find(&categories)
+		db.Model(&podcast).Association("Categories").Append(&categories)
+	}
+	if len(topicIDs) > 0 {
+		db.Where("id IN ?", topicIDs).Find(&topics)
+		db.Model(&podcast).Association("Topics").Append(&topics)
 	}
 
-	if chapterID != "" {
-		if chapterUUID, err := uuid.Parse(chapterID); err == nil {
-			podcast.ChapterID = chapterUUID
+	if len(tagIDs) > 0 {
+		db.Where("id IN ?", tagIDs).Find(&tags)
+	}
+	for _, name := range tagNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
 		}
-	}
-
-	// ====== Cập nhật các quan hệ N-N ======
-	if categoryIDs != "" {
-		var categories []models.Category
-		for _, id := range splitAndParseUUIDs(categoryIDs) {
-			categories = append(categories, models.Category{ID: id})
+		var tag models.Tag
+		if err := db.Where("LOWER(name) = LOWER(?)", name).First(&tag).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				tag = models.Tag{
+					ID:   uuid.New(),
+					Name: name,
+				}
+				db.Create(&tag)
+			}
 		}
-		db.Model(&podcast).Association("Categories").Replace(&categories)
+		tags = append(tags, tag)
+	}
+	if len(tags) > 0 {
+		db.Model(&podcast).Association("Tags").Append(&tags)
 	}
 
-	if topicIDs != "" {
-		var topics []models.Topic
-		for _, id := range splitAndParseUUIDs(topicIDs) {
-			topics = append(topics, models.Topic{ID: id})
-		}
-		db.Model(&podcast).Association("Topics").Replace(&topics)
-	}
-
-	if tagIDs != "" {
-		var tags []models.Tag
-		for _, id := range splitAndParseUUIDs(tagIDs) {
-			tags = append(tags, models.Tag{ID: id})
-		}
-		db.Model(&podcast).Association("Tags").Replace(&tags)
-	}
-
-	// ====== Lưu thay đổi ======
+	// === 7 Lưu thay đổi ===
 	if err := db.Save(&podcast).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật podcast"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật podcast", "details": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, podcast)
-}
+	db.Preload("Categories").Preload("Topics").Preload("Tags").First(&podcast, "id = ?", podcast.ID)
 
-// splitAndParseUUIDs tách chuỗi UUID bằng dấu phẩy
-func splitAndParseUUIDs(input string) []uuid.UUID {
-	var result []uuid.UUID
-	for _, s := range strings.Split(input, ",") {
-		if id, err := uuid.Parse(strings.TrimSpace(s)); err == nil {
-			result = append(result, id)
-		}
-	}
-	return result
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật podcast thành công",
+		"podcast": podcast,
+	})
 }
 
 /*============= USER =============*/

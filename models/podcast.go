@@ -9,7 +9,7 @@ import (
 type Podcast struct {
 	ID          uuid.UUID  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	ChapterID   uuid.UUID  `gorm:"type:uuid;" json:"chapter_id"`
-	Chapter     Chapter    `gorm:"constraint:OnDelete:CASCADE;"`
+	Chapter     Chapter    `gorm:"constraint:OnDelete:CASCADE;preload:true"`
 	DocumentID  uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
 	Document    Document   `gorm:"constraint:OnDelete:CASCADE;"`
 	Title       string     `gorm:"size:255;not null" json:"title"`
@@ -23,6 +23,8 @@ type Podcast struct {
 	CoverImage  string     `gorm:"type:text" json:"cover_image"`
 	CreatedBy   uuid.UUID  `gorm:"type:uuid;not null" json:"created_by"`
 	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt   time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
+	UpdatedBy   *uuid.UUID `gorm:"type:uuid" json:"updated_by"`
 	PublishedAt *time.Time `gorm:"autoUpdateTime" json:"published_at"`
 
 	Categories []Category `gorm:"many2many:podcast_categories" json:"categories"`
