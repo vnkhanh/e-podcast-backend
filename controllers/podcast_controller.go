@@ -807,12 +807,16 @@ func GetPodcastByID(c *gin.Context) {
 	id := c.Param("id")
 
 	var podcast models.Podcast
-	if err := db.Preload("Chapter").
+	if err := db.
+		Preload("Chapter").
+		Preload("Chapter.Subject").
 		Preload("Document").
+		Preload("Document.User").
 		Preload("Categories").
 		Preload("Topics").
 		Preload("Tags").
 		First(&podcast, "id = ?", id).Error; err != nil {
+
 		if err == gorm.ErrRecordNotFound {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
 		} else {
@@ -821,9 +825,9 @@ func GetPodcastByID(c *gin.Context) {
 		return
 	}
 
-	// Trả về JSON
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Lấy chi tiết podcast thành công",
 		"data":    podcast,
 	})
 }
+

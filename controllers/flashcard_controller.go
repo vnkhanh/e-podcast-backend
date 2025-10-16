@@ -32,9 +32,15 @@ func SplitTextIntoChunksSmart(text string, maxChunkSize int) []string {
 			continue
 		}
 
-		// Nếu đoạn quá dài thì tách nhỏ theo câu
 		if len([]rune(p)) > maxChunkSize {
-			sentences := regexp.MustCompile(`(?<=[.!?。！？])\s+`).Split(p, -1)
+			// Cách chia câu không dùng lookbehind
+			re := regexp.MustCompile(`[.!?。！？]`)
+			p = re.ReplaceAllStringFunc(p, func(m string) string {
+				return m + "|SPLIT|" // thêm marker sau dấu câu
+			})
+
+			sentences := strings.Split(p, "|SPLIT|")
+
 			for _, s := range sentences {
 				s = strings.TrimSpace(s)
 				if s == "" {
@@ -50,7 +56,6 @@ func SplitTextIntoChunksSmart(text string, maxChunkSize int) []string {
 				}
 			}
 		} else {
-			// nếu đoạn vừa phải, gom chung với đoạn trước cho đủ 1 chunk
 			if len([]rune(current.String()))+len([]rune(p)) < maxChunkSize {
 				current.WriteString(p + "\n\n")
 			} else {
