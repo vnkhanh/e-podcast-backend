@@ -97,14 +97,14 @@ func UploadDocument(c *gin.Context) {
 		FileHeader: file,
 	})
 	if err != nil {
-		updateStatus("Lỗi", 0, err.Error())
+		updateStatus("Lỗi trích xuất văn bản", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể trích xuất nội dung", "details": err.Error()})
 		return
 	}
 
 	cleanedContent, err := services.CleanTextPipeline(noiDung)
 	if err != nil {
-		updateStatus("Lỗi", 0, err.Error())
+		updateStatus("Lỗi làm sạch nội dung", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể làm sạch nội dung", "details": err.Error()})
 		return
 	}
@@ -118,20 +118,34 @@ func UploadDocument(c *gin.Context) {
 
 	// --- Tạo audio ---
 	updateStatus("Đang tạo audio", 55, "")
-	audioURL, err := utils.CallVITSTTS(cleanedContent)
-	if err != nil {
-		updateStatus("Lỗi tạo audio", 0, err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Không thể tạo audio từ VITS",
-			"details": err.Error(),
-		})
-		return
+	// Lấy voice & rate
+	voice := c.PostForm("voice")
+	if voice == "" {
+		voice = "vi-VN-Chirp3-HD-Puck"
+	}
+	rate := 1.0
+	if rateStr := c.PostForm("speaking_rate"); rateStr != "" {
+		if parsed, err := strconv.ParseFloat(rateStr, 64); err == nil && parsed > 0 {
+			rate = parsed
+		}
 	}
 
+	audioData, err := services.SynthesizeText(cleanedContent, voice, rate)
+	if err != nil {
+		updateStatus("Lỗi tạo audio", 0, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo audio", "details": err.Error()})
+		return
+	}
 	// Tiến trình mượt 55 → 95
 	for p := 60; p < 95; p += 10 {
-		updateStatus("Đang tạo audio", float64(p), "")
+		updateStatus("Đang lưu audio", float64(p), "")
 		time.Sleep(200 * time.Millisecond)
+	}
+	audioURL, err := utils.UploadAudioToSupabase(audioData, docID.String()+".mp3", "audio/mp3")
+	if err != nil {
+		updateStatus("Lỗi lưu audio", 0, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể upload audio", "details": err.Error()})
+		return
 	}
 
 	// --- Hoàn tất ---

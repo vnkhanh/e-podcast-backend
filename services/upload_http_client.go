@@ -10,7 +10,7 @@ import (
 	"os"
 )
 
-func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token string) (map[string]interface{}, error) {
+func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token string, voice string, speakingRate float64) (map[string]interface{}, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -27,6 +27,19 @@ func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token stri
 	defer fileContent.Close()
 	if _, err := io.Copy(fw, fileContent); err != nil {
 		return nil, fmt.Errorf("failed to copy file content: %v", err)
+	}
+
+	// Log dữ liệu file, voice và speakingRate
+	fmt.Println("Dữ liệu file: ", file.Filename)
+	fmt.Println("Voice: ", voice)
+	fmt.Println("Speaking Rate: ", speakingRate)
+
+	// Ghi các trường vào form
+	if err := writer.WriteField("voice", voice); err != nil {
+		return nil, fmt.Errorf("failed to write voice field: %v", err)
+	}
+	if err := writer.WriteField("speaking_rate", fmt.Sprintf("%f", speakingRate)); err != nil {
+		return nil, fmt.Errorf("failed to write speaking_rate field: %v", err)
 	}
 
 	writer.Close()

@@ -1,70 +1,103 @@
+// package services
 package services
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
+
+	texttospeech "cloud.google.com/go/texttospeech/apiv1"
+	texttospeechpb "cloud.google.com/go/texttospeech/apiv1/texttospeechpb"
+	"google.golang.org/api/option"
 )
 
-// GenerateMP3FromText dùng ElevenLabs TTS để sinh audio MP3.
-// Trả về []byte (audio MP3) và thời lượng ước lượng theo số ký tự.
-func GenerateMP3FromText(ctx context.Context, text, languageCode, voiceID string, speakingRate float32) ([]byte, int, error) {
-	apiKey := os.Getenv("ELEVENLABS_API_KEY")
-	if apiKey == "" {
-		return nil, 0, fmt.Errorf("ELEVENLABS_API_KEY not set")
+// SynthesizeText chuyển text thành audio []byte
+func SynthesizeText(text string, voice string, rate float64) ([]byte, error) {
+	if len(text) == 0 {
+		return nil, errors.New("text is empty")
+	}
+	if voice == "" {
+		voice = "vi-VN-Chirp3-HD-Puck"
+	}
+	if rate <= 0 {
+		rate = 1.0
 	}
 
-	if voiceID == "" {
-		voiceID = "foH7s9fX31wFFH2yqrFa" // mặc định: Rachel (ElevenLabs sample voice)
+	ctx := context.Background()
+	credPath := os.Getenv("GOOGLE_CREDENTIALS_JSON")
+	if credPath == "" {
+		return nil, errors.New("GOOGLE_CREDENTIALS_JSON environment variable is not set")
 	}
 
-	// ElevenLabs endpoint
-	url := fmt.Sprintf("https://api.elevenlabs.io/v1/text-to-speech/%s", voiceID)
+	// client, err := texttospeech.NewClient(ctx, option.WithCredentialsJSON([]byte(jsonCreds)))//Nào deploy mới dùng
+	client, err := texttospeech.NewClient(ctx, option.WithCredentialsFile(credPath))
 
-	// Payload JSON
-	payload := fmt.Sprintf(`{
-	"text": %q,
-	"model_id": "eleven_multilingual_v2",
-	"voice_settings": {
-		"stability": 0.25,
-		"similarity_boost": 0.9
-	}
-	}`, text)
-
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
-		return nil, 0, err
+		return nil, err
+	}
+	defer client.Close()
+
+	chunks := splitTextToChunksByByte(text, 4500) // Dưới ngưỡng 5000 bytes
+	var allAudio []byte
+
+	for idx, chunk := range chunks {
+		fmt.Printf("Synthesizing chunk %d/%d: %d bytes\n", idx+1, len(chunks), len(chunk))
+
+		req := &texttospeechpb.SynthesizeSpeechRequest{
+			Input: &texttospeechpb.SynthesisInput{
+				InputSource: &texttospeechpb.SynthesisInput_Text{
+					Text: chunk,
+				},
+			},
+			Voice: &texttospeechpb.VoiceSelectionParams{
+				LanguageCode: "vi-VN",
+				Name:         voice,
+			},
+			AudioConfig: &texttospeechpb.AudioConfig{
+				AudioEncoding: texttospeechpb.AudioEncoding_MP3,
+				SpeakingRate:  rate,
+			},
+		}
+
+		resp, err := client.SynthesizeSpeech(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		allAudio = append(allAudio, resp.AudioContent...)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "audio/mpeg")
-	req.Header.Set("xi-api-key", "sk_0b89c77f2588094dafc614ffbfd80d0821faf07732da323b")
+	return allAudio, nil
+}
 
-	// Gửi request
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, 0, err
+// splitTextToChunksByByte chia text theo giới hạn byte + dấu câu
+func splitTextToChunksByByte(text string, maxBytes int) []string {
+	var chunks []string
+	remaining := text
+
+	for len(remaining) > 0 {
+		if len(remaining) <= maxBytes {
+			chunks = append(chunks, remaining)
+			break
+		}
+
+		cutPos := maxBytes
+		// Tìm dấu câu trong đoạn cắt được
+		for i := cutPos; i > 0; i-- {
+			if remaining[i-1] == '.' || remaining[i-1] == '!' || remaining[i-1] == '?' || remaining[i-1] == '\n' {
+				cutPos = i
+				break
+			}
+		}
+
+		// Nếu không tìm thấy dấu câu, đảm bảo không cắt giữa ký tự UTF-8
+		for cutPos < len(remaining) && (remaining[cutPos]&0xC0) == 0x80 {
+			cutPos++
+		}
+
+		chunks = append(chunks, remaining[:cutPos])
+		remaining = remaining[cutPos:]
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, 0, fmt.Errorf("elevenlabs error: %s - %s", resp.Status, string(body))
-	}
-
-	audio, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	// Ước lượng thời gian đọc
-	est := len(text) / 14
-	if est < 1 {
-		est = 1
-	}
-
-	return audio, est, nil
+	return chunks
 }

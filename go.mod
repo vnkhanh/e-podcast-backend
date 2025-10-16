@@ -25,19 +25,21 @@ require github.com/gin-contrib/cors v1.7.6
 require (
 	github.com/google/generative-ai-go v0.20.1
 	github.com/gorilla/websocket v1.5.3
-	google.golang.org/api v0.239.0
+	google.golang.org/api v0.247.0
 )
 
+require cloud.google.com/go/texttospeech v1.15.1
+
 require (
-	cloud.google.com/go v0.115.0 // indirect
+	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/ai v0.8.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/longrunning v0.5.7 // indirect
+	cloud.google.com/go/longrunning v0.6.7 // indirect
 	github.com/tcolgate/mp3 v0.0.0-20170426193717-e79c5a46d300
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250603155806-513f23925822 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250818200422-3122310a409c // indirect
 )
 
 require (

@@ -57,7 +57,7 @@ func SummarizeText(text string) (string, error) {
 	3. Có thể thêm câu chuyển đoạn ngắn để mạch lạc hơn
 	4. Không sử dụng từ ngữ chuyên môn quá khó hiểu
 	5. Giọng văn trung tính, nhẹ nhàng, phù hợp để đọc lên
-	6. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt
+	6. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG GÌ HẾT
 	7. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt phù hợp để chuyển thành audio podcast
 	8. Có thể bắt đầu bằng câu "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." để rõ ràng hơn
 	Đoạn văn bản cần viết lại:`

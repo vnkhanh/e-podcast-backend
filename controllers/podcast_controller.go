@@ -113,6 +113,14 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		coverImage = imageURL
 	}
 
+	//Xử lý voice
+	voice := c.DefaultPostForm("voice", "vi-VN-Chirp3-HD-Puck")
+	speakingRateStr := c.DefaultPostForm("speaking_rate", "1.0")
+	rateValue, err := strconv.ParseFloat(speakingRateStr, 64)
+	if err != nil || rateValue <= 0 {
+		rateValue = 1.0
+	}
+
 	// === 5 Gọi API xử lý tài liệu ===
 	authHeader := c.GetHeader("Authorization")
 	parts := strings.Split(authHeader, " ")
@@ -122,7 +130,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	}
 	token := parts[1]
 
-	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token)
+	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi gọi UploadDocument", "details": err.Error()})
@@ -154,12 +162,12 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	}
 	docUUID, _ := uuid.Parse(docIDStr)
 
-	// durationFloat, err := services.GetMP3DurationFromURL(audioURL)
-	// if err != nil {
-	// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tính thời lượng", "details": err.Error()})
-	// 	return
-	// }
-	// totalSeconds := int(durationFloat)
+	durationFloat, err := services.GetMP3DurationFromURL(audioURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tính thời lượng", "details": err.Error()})
+		return
+	}
+	totalSeconds := int(durationFloat)
 
 	// === 6 Tạo podcast mới ===
 	podcast := models.Podcast{
@@ -169,7 +177,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		Title:       title,
 		Description: description,
 		AudioURL:    audioURL,
-		DurationSec: 0,
+		DurationSec: totalSeconds,
 		CoverImage:  coverImage,
 		Status:      "draft",
 		CreatedBy:   userUUID,

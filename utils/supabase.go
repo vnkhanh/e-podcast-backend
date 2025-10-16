@@ -55,7 +55,7 @@ func UploadFileToSupabase(fileHeader *multipart.FileHeader, fileID string) (stri
 
 // UploadBytesToSupabase uploads byte data (e.g. .mp3) to Supabase Storage
 // Path: uploads/audio/<filename>.mp3
-func UploadBytesToSupabase(data []byte, filename string, contentType string) (string, error) {
+func UploadAudioToSupabase(data []byte, filename string, contentType string) (string, error) {
 	supabaseURL := os.Getenv("SUPABASE_URL")
 	supabaseKey := os.Getenv("SUPABASE_KEY")
 
