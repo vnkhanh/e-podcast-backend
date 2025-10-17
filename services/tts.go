@@ -13,7 +13,7 @@ import (
 )
 
 // SynthesizeText chuyển text thành audio []byte
-func SynthesizeText(text string, voice string, rate float64) ([]byte, error) {
+func SynthesizeText(text string, voice string, rate float64, pitch float64) ([]byte, error) {
 	if len(text) == 0 {
 		return nil, errors.New("text is empty")
 	}
@@ -23,7 +23,9 @@ func SynthesizeText(text string, voice string, rate float64) ([]byte, error) {
 	if rate <= 0 {
 		rate = 1.0
 	}
-
+	if pitch < -10.0 || pitch > 10.0 {
+		pitch=0.0
+	}
 	ctx := context.Background()
 	credPath := os.Getenv("GOOGLE_CREDENTIALS_JSON")
 	if credPath == "" {
@@ -57,6 +59,7 @@ func SynthesizeText(text string, voice string, rate float64) ([]byte, error) {
 			AudioConfig: &texttospeechpb.AudioConfig{
 				AudioEncoding: texttospeechpb.AudioEncoding_MP3,
 				SpeakingRate:  rate,
+				Pitch: pitch,
 			},
 		}
 

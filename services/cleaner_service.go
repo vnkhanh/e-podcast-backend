@@ -49,24 +49,37 @@ func CleanWithGemini(text string) (string, error) {
 	return GeminiGenerateText(fullPrompt)
 }
 
-func SummarizeText(text string) (string, error) {
+func ExctractText(text string) (string, error) {
 	prompt := `Tôi có một đoạn văn bản, bạn hãy giúp tôi viết lại nội dung một cách rõ ràng và gọn hơn, dễ nghe khi được chuyển thành giọng nói (audio).
 	Yêu cầu:
 	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
 	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
-	3. Có thể thêm câu chuyển đoạn ngắn để mạch lạc hơn
-	4. Không sử dụng từ ngữ chuyên môn quá khó hiểu
-	5. Giọng văn trung tính, nhẹ nhàng, phù hợp để đọc lên
-	6. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG GÌ HẾT
-	7. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt phù hợp để chuyển thành audio podcast
-	8. Có thể bắt đầu bằng câu "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." để rõ ràng hơn
+	3. Không sử dụng từ ngữ chuyên môn quá khó hiểu
+	4. Giọng văn trung tính, nhẹ nhàng, phù hợp để đọc lên
+	5. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG GÌ HẾT
+	6. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt phù hợp để chuyển thành audio podcast
+	7. Có thể bắt đầu bằng câu "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." để rõ ràng hơn
 	Đoạn văn bản cần viết lại:`
 
 	fullPrompt := prompt + "\n\n" + text
 
 	return GeminiGenerateText(fullPrompt)
 }
+func SummaryText(text string) (string, error) {
+	prompt := `Bạn là công cụ tóm tắt văn bản, hãy giúp tôi tóm tắt nội dung thành một đoạn văn một cách rõ ràng và gọn hơn
+	Yêu cầu:
+	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
+	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
+	3. Có thể thêm câu chuyển đoạn ngắn để mạch lạc hơn
+	4. Không sử dụng từ ngữ chuyên môn quá khó hiểu
+	5. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt
+	6. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt.
+	Đoạn văn bản cần viết lại:`
 
+	fullPrompt := prompt + "\n\n" + text
+
+	return GeminiGenerateText(fullPrompt)
+}
 // CleanTextPipeline là pipeline chính: Regex + Gemini
 func CleanTextPipeline(rawText string) (string, error) {
 	preCleaned := PreCleanText(rawText)
@@ -74,9 +87,10 @@ func CleanTextPipeline(rawText string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	summary, err := SummarizeText(finalCleaned)
+	extract, err := ExctractText(finalCleaned)
 	if err != nil {
 		return "", err
 	}
-	return summary, nil
+
+	return extract, nil
 }

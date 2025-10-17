@@ -34,8 +34,8 @@ func UploadDocument(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Không có file đính kèm"})
 		return
 	}
-	if file.Size > 20*1024*1024 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "File vượt quá 20MB"})
+	if file.Size > 10*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "File vượt quá 10MB"})
 		return
 	}
 
@@ -115,9 +115,16 @@ func UploadDocument(c *gin.Context) {
 		time.Sleep(200 * time.Millisecond)
 	}
 	db.Model(&doc).Update("extracted_text", cleanedContent)
+	updateStatus("Đang xử lý văn bản", 55, "")
 
+	summary, err := services.SummaryText(cleanedContent)
+	if err != nil {
+		updateStatus("Lỗi tóm tắt nội dung", 0, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tóm tắt nội dung", "details": err.Error()})
+		return
+	}
 	// --- Tạo audio ---
-	updateStatus("Đang tạo audio", 55, "")
+	updateStatus("Đang tạo audio", 60, "")
 	// Lấy voice & rate
 	voice := c.PostForm("voice")
 	if voice == "" {
@@ -130,14 +137,20 @@ func UploadDocument(c *gin.Context) {
 		}
 	}
 
-	audioData, err := services.SynthesizeText(cleanedContent, voice, rate)
+	pitch := 0.0
+	if pitchtr := c.PostForm("speaking_rate"); pitchtr != "" {
+		if parsed, err := strconv.ParseFloat(pitchtr, 64); err == nil && parsed > 0 {
+			pitch = parsed
+		}
+	}
+	audioData, err := services.SynthesizeText(cleanedContent, voice, rate, pitch)
 	if err != nil {
 		updateStatus("Lỗi tạo audio", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo audio", "details": err.Error()})
 		return
 	}
 	// Tiến trình mượt 55 → 95
-	for p := 60; p < 95; p += 10 {
+	for p := 65; p < 95; p += 10 {
 		updateStatus("Đang lưu audio", float64(p), "")
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -153,6 +166,7 @@ func UploadDocument(c *gin.Context) {
 	now := time.Now()
 	db.Model(&doc).Updates(map[string]interface{}{
 		"audio_url":    audioURL,
+		"summary": summary,
 		"status":       "Hoàn thành",
 		"processed_at": &now,
 	})
@@ -162,6 +176,7 @@ func UploadDocument(c *gin.Context) {
 		"message":   "Tải lên thành công",
 		"tai_lieu":  doc,
 		"audio_url": audioURL,
+		"summary": summary,
 	})
 }
 

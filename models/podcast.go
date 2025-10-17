@@ -25,7 +25,7 @@ type Podcast struct {
 	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt   time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	UpdatedBy   *uuid.UUID `gorm:"type:uuid" json:"updated_by"`
-	PublishedAt *time.Time `gorm:"autoUpdateTime" json:"published_at"`
+	PublishedAt *time.Time `json:"published_at"`
 
 	Categories []Category `gorm:"many2many:podcast_categories" json:"categories"`
 	Topics     []Topic    `gorm:"many2many:podcast_topics" json:"topics"`

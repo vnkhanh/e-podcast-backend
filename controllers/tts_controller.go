@@ -12,6 +12,7 @@ type TTSRequest struct {
 	Text         string  `json:"text" binding:"required"`
 	Voice        string  `json:"voice"`
 	SpeakingRate float64 `json:"speaking_rate"`
+	Pitch 		 float64 `json:"pitch"`
 }
 
 func TextToSpeechHandler(c *gin.Context) {
@@ -21,7 +22,7 @@ func TextToSpeechHandler(c *gin.Context) {
 		return
 	}
 
-	audioContent, err := services.SynthesizeText(req.Text, req.Voice, req.SpeakingRate)
+	audioContent, err := services.SynthesizeText(req.Text, req.Voice, req.SpeakingRate, req.Pitch)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

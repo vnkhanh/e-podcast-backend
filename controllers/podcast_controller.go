@@ -120,7 +120,11 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	if err != nil || rateValue <= 0 {
 		rateValue = 1.0
 	}
-
+	pitchStr  := c.DefaultPostForm("pitch", "0.0")
+	pitchValue, er := strconv.ParseFloat(pitchStr , 64)
+	if er != nil {
+		pitchValue = 0.0
+	}
 	// === 5 Gọi API xử lý tài liệu ===
 	authHeader := c.GetHeader("Authorization")
 	parts := strings.Split(authHeader, " ")
@@ -130,7 +134,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	}
 	token := parts[1]
 
-	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue)
+	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue, pitchValue)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi gọi UploadDocument", "details": err.Error()})
@@ -154,7 +158,11 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy audio URL từ UploadDocument"})
 		return
 	}
-
+	summary, ok := respData["summary"].(string)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy summary từ UploadDocument"})
+		return
+	}
 	docIDStr, ok := taiLieuMap["id"].(string)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy ID tài liệu"})
@@ -178,6 +186,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		Description: description,
 		AudioURL:    audioURL,
 		DurationSec: totalSeconds,
+		Summary: 	summary,
 		CoverImage:  coverImage,
 		Status:      "draft",
 		CreatedBy:   userUUID,
@@ -617,7 +626,12 @@ func UpdatePodcast(c *gin.Context) {
 	}
 	if status != "" {
 		podcast.Status = status
+		if status == "published" && podcast.PublishedAt == nil {
+			now := time.Now()
+			podcast.PublishedAt = &now
+		}
 	}
+
 	podcast.UpdatedBy = &userUUID
 	podcast.UpdatedAt = time.Now()
 

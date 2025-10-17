@@ -10,7 +10,7 @@ import (
 	"os"
 )
 
-func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token string, voice string, speakingRate float64) (map[string]interface{}, error) {
+func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token string, voice string, speakingRate float64, pitch float64) (map[string]interface{}, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -41,7 +41,9 @@ func CallUploadDocumentAPI(file *multipart.FileHeader, userID string, token stri
 	if err := writer.WriteField("speaking_rate", fmt.Sprintf("%f", speakingRate)); err != nil {
 		return nil, fmt.Errorf("failed to write speaking_rate field: %v", err)
 	}
-
+	if err := writer.WriteField("pitch", fmt.Sprintf("%f", pitch)); err != nil {
+		return nil, fmt.Errorf("failed to write pitch field: %v", err)
+	}
 	writer.Close()
 
 	baseURL := os.Getenv("API_BASE_URL")
