@@ -46,3 +46,41 @@ func AuthMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+func OptionalAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+
+		// Cho iOS: thử X-Auth-Token nếu không có Authorization
+		if authHeader == "" {
+			authHeader = c.GetHeader("X-Auth-Token")
+		}
+
+		// Nếu không có token -> Cho qua (anonymous)
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+
+		// Phải là "Bearer <token>"
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			// Token sai định dạng -> coi như anonymous
+			c.Next()
+			return
+		}
+
+		tokenString := parts[1]
+		claims, err := utils.VerifyToken(tokenString)
+		if err != nil {
+			// Token sai / hết hạn -> coi như anonymous
+			c.Next()
+			return
+		}
+
+		// Token hợp lệ -> lưu thông tin user
+		c.Set("user_id", claims.UserID)
+		c.Set("role", claims.Role)
+		c.Next()
+	}
+}

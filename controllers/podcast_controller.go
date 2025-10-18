@@ -3,10 +3,12 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -74,7 +76,6 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		// Tìm chương trong môn học này
 		if err := db.Where("subject_id = ? AND LOWER(title) = LOWER(?)", subjectUUID, chapterTitle).
 			First(&chapter).Error; err != nil {
-
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				var maxOrder int
 				db.Model(&models.Chapter{}).
@@ -113,15 +114,15 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		coverImage = imageURL
 	}
 
-	//Xử lý voice
+	// Xử lý voice
 	voice := c.DefaultPostForm("voice", "vi-VN-Chirp3-HD-Puck")
 	speakingRateStr := c.DefaultPostForm("speaking_rate", "1.0")
 	rateValue, err := strconv.ParseFloat(speakingRateStr, 64)
 	if err != nil || rateValue <= 0 {
 		rateValue = 1.0
 	}
-	pitchStr  := c.DefaultPostForm("pitch", "0.0")
-	pitchValue, er := strconv.ParseFloat(pitchStr , 64)
+	pitchStr := c.DefaultPostForm("pitch", "0.0")
+	pitchValue, er := strconv.ParseFloat(pitchStr, 64)
 	if er != nil {
 		pitchValue = 0.0
 	}
@@ -135,7 +136,6 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	token := parts[1]
 
 	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue, pitchValue)
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi gọi UploadDocument", "details": err.Error()})
 		return
@@ -186,7 +186,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		Description: description,
 		AudioURL:    audioURL,
 		DurationSec: totalSeconds,
-		Summary: 	summary,
+		Summary:     summary,
 		CoverImage:  coverImage,
 		Status:      "draft",
 		CreatedBy:   userUUID,
@@ -845,3 +845,156 @@ func GetPodcastByID(c *gin.Context) {
 	})
 }
 
+// ///LƯỢT NGHE
+var (
+	listenCache   = make(map[string]time.Time)
+	listenCacheMu sync.Mutex
+	cacheDuration = 10 * time.Minute // Mỗi IP/user chỉ tính 1 lần / 10 phút / podcast
+)
+
+// Khởi động goroutine dọn cache mỗi 1h khi server chạy
+func init() {
+	go startListenCacheCleaner()
+}
+
+// Dọn cache cũ và in log
+func startListenCacheCleaner() {
+	ticker := time.NewTicker(1 * time.Hour)
+	for range ticker.C {
+		cleaned := 0
+		now := time.Now()
+
+		listenCacheMu.Lock()
+		for key, t := range listenCache {
+			if now.Sub(t) > cacheDuration {
+				delete(listenCache, key)
+				cleaned++
+			}
+		}
+		listenCacheMu.Unlock()
+
+		if cleaned > 0 {
+			log.Printf("[CacheCleaner] Đã xóa %d cache cũ (tổng còn %d)\n", cleaned, len(listenCache))
+		} else {
+			log.Println("[CacheCleaner] Không có cache nào cần xóa.")
+		}
+	}
+}
+
+// IncreasePodcastListenCount godoc
+// @Summary Tăng lượt nghe podcast khi người nghe >= 30s
+// @Description Cho phép cả người chưa đăng nhập. Nếu có user và là admin/teacher thì bỏ qua. Có chống spam thông minh và dọn cache định kỳ.
+// @Tags Podcasts
+// @Accept json
+// @Produce json
+// @Param id path string true "Podcast ID"
+// @Param listened_seconds query int true "Số giây người dùng đã nghe"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]string
+// @Router /podcasts/{id}/listen [POST]
+func IncreasePodcastListenCount(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	podcastID := c.Param("id")
+	listenedSec := c.Query("listened_seconds")
+
+	if listenedSec == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Thiếu tham số listened_seconds"})
+		return
+	}
+
+	var seconds int
+	if _, err := fmt.Sscanf(listenedSec, "%d", &seconds); err != nil || seconds < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Giá trị listened_seconds không hợp lệ"})
+		return
+	}
+
+	// Chỉ tính nếu nghe >= 30s
+	if seconds < 30 {
+		c.JSON(http.StatusOK, gin.H{"message": "Chưa đủ 30s, không tăng lượt nghe"})
+		return
+	}
+
+	// Parse podcast ID
+	podcastUUID, err := uuid.Parse(podcastID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Podcast ID không hợp lệ"})
+		return
+	}
+
+	// Kiểm tra tồn tại podcast
+	var podcast models.Podcast
+	if err := db.First(&podcast, "id = ?", podcastUUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
+		return
+	}
+
+	// Nếu có user -> lấy role
+	var role string
+	var userID interface{}
+	if val, exists := c.Get("role"); exists {
+		role = val.(string)
+	}
+	if val, exists := c.Get("user_id"); exists {
+		userID = val
+	}
+
+	// Bỏ qua admin/teacher
+	if role == string(models.RoleAdmin) || role == string(models.RoleLecturer) {
+		log.Printf("[ViewSkip] Bỏ qua lượt nghe (admin/teacher) | Podcast=%s | Role=%s\n", podcastID, role)
+		c.JSON(http.StatusOK, gin.H{"message": "Admin/teacher không tính lượt nghe"})
+		return
+	}
+
+	// Lấy IP
+	ip := c.ClientIP()
+
+	// Tạo cache key: khác user vẫn được tính, anonymous theo IP
+	var cacheKey string
+	if userID != nil {
+		cacheKey = fmt.Sprintf("%s_user_%v", podcastID, userID)
+	} else {
+		cacheKey = fmt.Sprintf("%s_ip_%s", podcastID, ip)
+	}
+
+	// Kiểm tra cache chống spam
+	listenCacheMu.Lock()
+	lastTime, exists := listenCache[cacheKey]
+	if exists && time.Since(lastTime) < cacheDuration {
+		listenCacheMu.Unlock()
+		log.Printf("[SpamBlock] Bỏ qua lượt nghe trùng | Podcast=%s | Key=%s | IP=%s\n", podcastID, cacheKey, ip)
+		c.JSON(http.StatusOK, gin.H{"message": "Đã tính lượt nghe gần đây, bỏ qua để chống spam"})
+		return
+	}
+	listenCache[cacheKey] = time.Now()
+	listenCacheMu.Unlock()
+
+	// Cập nhật view_count trực tiếp trong DB
+	result := db.Model(&models.Podcast{}).
+		Where("id = ?", podcastUUID).
+		UpdateColumn("view_count", gorm.Expr("view_count + 1"))
+	if result.Error != nil {
+		log.Printf("[Error] Không thể cập nhật view_count | Podcast=%s | Err=%v\n", podcastID, result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật lượt nghe"})
+		return
+	}
+
+	// Lấy lại giá trị mới từ DB để đảm bảo đồng bộ
+	if err := db.First(&podcast, "id = ?", podcastUUID).Error; err != nil {
+		log.Printf("[Error] Không thể load lại podcast sau khi tăng view | %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy dữ liệu mới"})
+		return
+	}
+
+	log.Printf("[ViewAdded] +1 view | Podcast=%s | IP=%s | User=%v | Role=%s | NewCount=%d\n",
+		podcastID, ip, userID, role, podcast.ViewCount)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Tăng lượt nghe thành công",
+		"podcast_id": podcast.ID,
+		"new_count":  podcast.ViewCount,
+		"user_id":    userID,
+		"role":       role,
+		"ip":         ip,
+		"timestamp":  time.Now(),
+	})
+}
