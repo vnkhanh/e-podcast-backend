@@ -224,7 +224,6 @@ func ForgotPassword(c *gin.Context) {
 
 	// ===== Trả response =====
 	c.JSON(http.StatusOK, gin.H{"message": "Nếu email tồn tại, link đổi mật khẩu đã được gửi"})
-
 }
 
 // ResetPassword dùng token JWT để cập nhật mật khẩu
@@ -554,6 +553,28 @@ func ToggleUserStatus(c *gin.Context) {
 		"message": "Cập nhật trạng thái thành công",
 		"user":    user,
 	})
+}
+
+// Nếu muốn lấy user từ JWT token hiện tại
+func GetProfileUser(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Chưa đăng nhập"})
+		return
+	}
+
+	var user models.User
+	db := c.MustGet("db").(*gorm.DB)
+	if err := db.Preload("Documents").
+		Preload("Favorites").
+		Preload("Notes").
+		Preload("Flashcards").
+		First(&user, "id = ?", userID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": user})
 }
 
 // type FacebookLoginInput struct {

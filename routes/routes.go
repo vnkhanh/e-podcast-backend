@@ -33,6 +33,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		account := user.Group("/account")
 		{
 			account.Use(middleware.AuthMiddleware())
+			account.GET("/me", controllers.GetProfileUser)
 		}
 		user.GET("/categories", controllers.GetCategoriesUser)
 		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)

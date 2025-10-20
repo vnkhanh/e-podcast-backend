@@ -55,6 +55,7 @@ func InitDB() {
 	err = DB.AutoMigrate(
 		&models.User{},
 		&models.Podcast{},
+		&models.PodcastListenHistory{},
 		&models.PodcastShare{},
 		&models.Flashcard{},
 		&models.Note{},
