@@ -798,6 +798,7 @@ func GetFeaturedPodcasts(c *gin.Context) {
 		Where("status = ?", "published").
 		Where("published_at >= ?", sevenDaysAgo).
 		Preload("Chapter").
+		Preload("Chapter.Subject").
 		Preload("Document").
 		Preload("Categories").
 		Order("like_count DESC, view_count DESC").
