@@ -25,8 +25,9 @@ type User struct {
 	Status    *bool     `gorm:"type:boolean" json:"status"`
 
 	// Quan hệ
-	Documents  []Document  `json:"documents"`
-	Favorites  []Favorite  `json:"favorites"`
-	Notes      []Note      `json:"notes"`
-	Flashcards []Flashcard `json:"flashcards"`
+	Documents          []Document         `json:"documents"`
+	Favorites          []Favorite         `json:"favorites"`
+	Notes              []Note             `json:"notes"`
+	Flashcards         []Flashcard        `json:"flashcards"`
+	ListeningHistories []ListeningHistory `json:"listening_histories,omitempty"`
 }

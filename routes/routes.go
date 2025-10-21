@@ -34,6 +34,12 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		{
 			account.Use(middleware.AuthMiddleware())
 			account.GET("/me", controllers.GetProfileUser)
+			account.GET("/listening-history", controllers.GetListeningHistory)
+			account.POST("/listening-history/:podcast_id", controllers.SavePodcastHistory)
+			account.GET("/listening-history/:podcast_id", controllers.GetPodcastHistory)
+			account.DELETE("/listening-history/:podcast_id", controllers.DeletePodcastHistory)
+			account.DELETE("/listening-history", controllers.ClearAllHistory)
+
 		}
 		user.GET("/categories", controllers.GetCategoriesUser)
 		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)
@@ -52,7 +58,6 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 
 		// Listening
 		user.POST("/podcasts/:id/listen", middleware.OptionalAuthMiddleware(), controllers.IncreasePodcastListenCount)
-
 	}
 	admin := api.Group("/admin")
 	admin.Use(
