@@ -242,40 +242,49 @@ func GetCategoriesGet(c *gin.Context) {
 }
 
 // /////USER
-type CategoryWithCount struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Slug      string `json:"slug"`
-	Status    bool   `json:"status"`
-	Count     int64  `json:"podcast_count"`
-	CreatedAt string `json:"created_at"`
-}
-
+// Lấy danh mục nổi bật
 func GetCategoriesUser(c *gin.Context) {
-	var categories []models.Category
+	type CategoryWithCount struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Slug      string `json:"slug"`
+		Status    bool   `json:"status"`
+		Count     int64  `json:"count"`
+		CreatedAt string `json:"created_at"`
+	}
 
-	// Lấy category có podcast đã publish
-	if err := config.DB.
-		Preload("Podcasts", "status = ?", "published").
-		Find(&categories).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách categories"})
+	var results []CategoryWithCount
+
+	err := config.DB.
+		Table("categories").
+		Select(`
+			categories.id,
+			categories.name,
+			categories.slug,
+			categories.status,
+			categories.created_at,
+			COUNT(podcasts.id) AS count
+		`).
+		Joins(`
+			JOIN podcast_categories ON categories.id = podcast_categories.category_id
+			JOIN podcasts ON podcasts.id = podcast_categories.podcast_id
+		`).
+		Where("podcasts.status = ?", "published").
+		Group("categories.id").
+		Order("count DESC").
+		Limit(6).
+		Scan(&results).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách danh mục phổ biến"})
 		return
 	}
 
-	var result []CategoryWithCount
-	for _, cat := range categories {
-		if len(cat.Podcasts) == 0 {
-			continue // bỏ qua category chưa có podcast publish
-		}
-		result = append(result, CategoryWithCount{
-			ID:        cat.ID.String(),
-			Name:      cat.Name,
-			Slug:      cat.Slug,
-			Status:    cat.Status,
-			Count:     int64(len(cat.Podcasts)),
-			CreatedAt: cat.CreatedAt.Format("2006-01-02 15:04:05"),
-		})
+	// Format ngày giờ
+	for i := range results {
+		results[i].CreatedAt = results[i].CreatedAt[:19] // giữ định dạng yyyy-mm-dd hh:mm:ss
 	}
 
-	c.JSON(http.StatusOK, gin.H{"categories": result})
+	c.JSON(http.StatusOK, gin.H{
+		"categories": results,
+	})
 }

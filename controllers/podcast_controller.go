@@ -801,6 +801,7 @@ func GetFeaturedPodcasts(c *gin.Context) {
 		Preload("Chapter.Subject").
 		Preload("Document").
 		Preload("Categories").
+		Preload("Tags").
 		Order("like_count DESC, view_count DESC").
 		Limit(10).
 		Find(&podcasts).Error; err != nil {
@@ -842,6 +843,100 @@ func GetPodcastByID(c *gin.Context) {
 		"message": "Lấy chi tiết podcast thành công",
 		"data":    podcast,
 	})
+}
+
+func GetLatestPodcasts(c *gin.Context) {
+	type PodcastResponse struct {
+		ID          string   `json:"id"`
+		Title       string   `json:"title"`
+		Summary     string   `json:"summary"`
+		CoverImage  string   `json:"cover_image"`
+		AudioURL    string   `json:"audio_url"`
+		PublishedAt string   `json:"published_at"`
+		Categories  []string `json:"categories"`
+		Chapter     string   `json:"chapter"`
+		Subject     string   `json:"subject"`
+		DurationSec string   `json:"duration_sec"`
+		ViewCount   int      `json:"view_count"`
+		LikeCount   int      `json:"like_count"`
+	}
+
+	var rows []struct {
+		PodcastID   string
+		Title       string
+		Summary     string
+		CoverImage  string
+		AudioURL    string
+		PublishedAt *time.Time
+		Chapter     string
+		Subject     string
+		Category    string
+		DurationSec string
+		ViewCount   int
+		LikeCount   int
+	}
+
+	// JOIN để lấy thông tin podcast, chapter, subject và category
+	err := config.DB.
+		Table("podcasts").
+		Select(`
+			podcasts.id as podcast_id,
+			podcasts.title,
+			podcasts.summary,
+			podcasts.cover_image,
+			podcasts.audio_url,
+			podcasts.published_at,
+			podcasts.duration_sec,
+			podcasts.like_count,
+			podcasts.view_count,
+			chapters.title as chapter,
+			subjects.name as subject,
+			categories.name as category
+		`).
+		Joins("JOIN chapters ON chapters.id = podcasts.chapter_id").
+		Joins("JOIN subjects ON subjects.id = chapters.subject_id").
+		Joins("LEFT JOIN podcast_categories ON podcasts.id = podcast_categories.podcast_id").
+		Joins("LEFT JOIN categories ON categories.id = podcast_categories.category_id").
+		Where("podcasts.status = ?", "published").
+		Order("podcasts.published_at DESC").
+		Limit(5).
+		Scan(&rows).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy podcast mới nhất"})
+		return
+	}
+
+	// Gom categories cho mỗi podcast
+	podcastMap := make(map[string]*PodcastResponse)
+	for _, r := range rows {
+		if _, exists := podcastMap[r.PodcastID]; !exists {
+			podcastMap[r.PodcastID] = &PodcastResponse{
+				ID:          r.PodcastID,
+				Title:       r.Title,
+				Summary:     r.Summary,
+				CoverImage:  r.CoverImage,
+				DurationSec: r.DurationSec,
+				ViewCount:   r.ViewCount,
+				LikeCount:   r.LikeCount,
+				AudioURL:    r.AudioURL,
+				PublishedAt: r.PublishedAt.Format("2006-01-02 15:04:05"),
+				Chapter:     r.Chapter,
+				Subject:     r.Subject,
+				Categories:  []string{},
+			}
+		}
+		if r.Category != "" {
+			podcastMap[r.PodcastID].Categories = append(podcastMap[r.PodcastID].Categories, r.Category)
+		}
+	}
+
+	// Chuyển map thành slice
+	var result []PodcastResponse
+	for _, v := range podcastMap {
+		result = append(result, *v)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"podcasts": result})
 }
 
 // ///LƯỢT NGHE
