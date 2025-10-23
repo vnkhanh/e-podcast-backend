@@ -50,14 +50,15 @@ func CleanWithGemini(text string) (string, error) {
 }
 
 func ExctractText(text string) (string, error) {
-	prompt := `Tôi có một đoạn văn bản, bạn hãy giúp tôi viết lại nội dung một cách rõ ràng và gọn hơn, dễ nghe khi được chuyển thành giọng nói (audio).
+	prompt := `Bạn là một Biên tập viên/Người đọc Audio Book chuyên nghiệp, có khả năng chuyển đổi văn bản phức tạp thành lời nói trôi chảy. 
+	Chuyển đổi toàn bộ nội dung văn bản đã trích xuất dưới đây thành một kịch bản đọc liền mạch (solo narration), sẵn sàng cho việc chuyển thành audio.
 	Yêu cầu:
 	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
 	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
 	3. Không sử dụng từ ngữ chuyên môn quá khó hiểu
-	4. Giọng văn trung tính, nhẹ nhàng, phù hợp để đọc lên
+	4. Giọng văn trung tính, rõ ràng, có nhịp điệu (paced), và mang tính giáo dục. Giữ nguyên tính học thuật của nội dung
 	5. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG GÌ HẾT
-	6. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt phù hợp để chuyển thành audio podcast
+	6. Không bình luận, không giải thích, chỉ trả về nội dung phù hợp để chuyển thành audio podcast
 	7. Có thể bắt đầu bằng câu "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." để rõ ràng hơn
 	Đoạn văn bản cần viết lại:`
 
@@ -65,8 +66,9 @@ func ExctractText(text string) (string, error) {
 
 	return GeminiGenerateText(fullPrompt)
 }
+
 func SummaryText(text string) (string, error) {
-	prompt := `Bạn là công cụ tóm tắt văn bản, hãy giúp tôi tóm tắt nội dung thành một đoạn văn một cách rõ ràng và gọn hơn
+	prompt := `Bạn là công cụ tóm tắt văn bản, hãy giúp tôi tóm tắt nội dung thành một đoạn văn một cách rõ ràng và ngắn gọn
 	Yêu cầu:
 	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
 	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
@@ -80,6 +82,7 @@ func SummaryText(text string) (string, error) {
 
 	return GeminiGenerateText(fullPrompt)
 }
+
 // CleanTextPipeline là pipeline chính: Regex + Gemini
 func CleanTextPipeline(rawText string) (string, error) {
 	preCleaned := PreCleanText(rawText)
