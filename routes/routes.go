@@ -78,8 +78,11 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		subjects.PUT("/:id", controllers.UpdateSubject)
 		subjects.DELETE("/:id", controllers.DeleteSubject)
 		subjects.PATCH("/:id/toggle-status", controllers.ToggleSubjectStatus)
+
+		// Chương
 		subjects.GET("/:id/chapters", controllers.ListChaptersBySubject)
 		subjects.POST("/:id/chapters", controllers.CreateChapter)
+		subjects.GET("/chapters/:id/check-deletable", controllers.CheckChapterDeletable)
 	}
 
 	// ==================== Quản lý chủ đề ====================
@@ -140,17 +143,6 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		users.DELETE("/:id", controllers.AdminDeleteUser)
 		users.PATCH("/:id/toggle-status", controllers.ToggleUserStatus)
 	}
-
-	// ==================== Quản lý chương (tạm ẩn nếu chưa dùng) ====================
-	// chapters := admin.Group("/chapters")
-	// {
-	// 	chapters.POST("/subjects/:id", controllers.CreateChapter)
-	// 	chapters.GET("/:id", controllers.GetChapterDetail)
-	// 	chapters.PUT("/:id", controllers.UpdateChapter)
-	// 	chapters.DELETE("/:id", controllers.DeleteChapter)
-	// }
-	admin.GET("/voices/vi", controllers.GetVietnameseVoices)
-
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)
 

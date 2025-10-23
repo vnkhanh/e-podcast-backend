@@ -9,9 +9,9 @@ import (
 type Podcast struct {
 	ID          uuid.UUID  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
 	ChapterID   uuid.UUID  `gorm:"type:uuid;" json:"chapter_id"`
-	Chapter     Chapter    `gorm:"constraint:OnDelete:CASCADE;preload:true"`
+	Chapter     Chapter    `gorm:"constraint:RESTRICT:CASCADE;preload:true"`
 	DocumentID  uuid.UUID  `gorm:"type:uuid;not null" json:"document_id"`
-	Document    Document   `gorm:"constraint:OnDelete:CASCADE;"`
+	Document    Document   `gorm:"constraint:RESTRICT:CASCADE;"`
 	Title       string     `gorm:"size:255;not null" json:"title"`
 	Description string     `gorm:"type:text" json:"description"`
 	AudioURL    string     `gorm:"type:text;not null" json:"audio_url"`

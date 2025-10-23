@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -79,13 +81,13 @@ func GetSubjects(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
 		return
 	}
+
 	// Phân quyền
 	if role == string(models.RoleLecturer) { // giảng viên
 		query = query.Where("created_by = ?", userUUID)
-	} else if role == string(models.RoleAdmin) {
-		// admin: không thêm filter, lấy tất cả
 	}
-	// lọc theo trạng thái
+
+	// Lọc theo trạng thái
 	if status := c.Query("status"); status != "" {
 		switch status {
 		case "true":
@@ -95,12 +97,40 @@ func GetSubjects(c *gin.Context) {
 		}
 	}
 
-	// tìm kiếm theo tên
+	// Tìm kiếm theo tên
 	if search := c.Query("search"); search != "" {
 		query = query.Where("name ILIKE ?", "%"+search+"%")
 	}
 
-	// phân trang
+	// Lọc theo ngày tạo (from_date, to_date)
+	fromDateStr := c.Query("from_date")
+	toDateStr := c.Query("to_date")
+
+	if fromDateStr != "" || toDateStr != "" {
+		const layout = "2006-01-02"
+
+		if fromDateStr != "" && toDateStr != "" {
+			fromDate, err1 := time.Parse(layout, fromDateStr)
+			toDate, err2 := time.Parse(layout, toDateStr)
+			if err1 == nil && err2 == nil {
+				toDate = toDate.Add(24 * time.Hour) // tính đến hết ngày to_date
+				query = query.Where("created_at BETWEEN ? AND ?", fromDate, toDate)
+			}
+		} else if fromDateStr != "" {
+			fromDate, err := time.Parse(layout, fromDateStr)
+			if err == nil {
+				query = query.Where("created_at >= ?", fromDate)
+			}
+		} else if toDateStr != "" {
+			toDate, err := time.Parse(layout, toDateStr)
+			if err == nil {
+				toDate = toDate.Add(24 * time.Hour)
+				query = query.Where("created_at < ?", toDate)
+			}
+		}
+	}
+
+	// Phân trang
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if page < 1 {
@@ -140,21 +170,36 @@ func GetSubjectDetail(c *gin.Context) {
 	}
 
 	var subject models.Subject
-	if err := config.DB.First(&subject, "id = ?", subjectID).Error; err != nil {
+	if err := config.DB.Preload("Chapters", func(db *gorm.DB) *gorm.DB {
+		return db.Order("created_at ASC")
+	}).First(&subject, "id = ?", subjectID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy môn học"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"subject": subject,
+		"subject":  subject,
+		"chapters": subject.Chapters,
 	})
+}
+
+type ChapterInput struct {
+	ID        *uuid.UUID `json:"id,omitempty"` // có thể null: nếu null -> tạo mới
+	Title     string     `json:"title"`
+	SortOrder int        `json:"sort_order"`
+}
+
+type UpdateSubjectInput struct {
+	Name     string         `json:"name"`
+	Status   *bool          `json:"status"`
+	Chapters []ChapterInput `json:"chapters"`
 }
 
 // PUT /admin/subjects/:id
 func UpdateSubject(c *gin.Context) {
-	var input CreateSubjectInput
+	var input UpdateSubjectInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học bắt buộc"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
 		return
 	}
 
@@ -166,11 +211,12 @@ func UpdateSubject(c *gin.Context) {
 	}
 
 	var subject models.Subject
-	if err := config.DB.First(&subject, "id = ?", subjectID).Error; err != nil {
+	if err := config.DB.Preload("Chapters").First(&subject, "id = ?", subjectID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Môn học không tồn tại"})
 		return
 	}
 
+	// === 1. Cập nhật thông tin cơ bản ===
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học không được trống"})
@@ -178,13 +224,10 @@ func UpdateSubject(c *gin.Context) {
 	}
 
 	slugValue := slug.Make(name)
-
-	// Kiểm tra trùng tên hoặc slug với các subject khác
 	var count int64
 	config.DB.Model(&models.Subject{}).
 		Where("(LOWER(TRIM(name)) = ? OR slug = ?) AND id <> ?", strings.ToLower(name), slugValue, subjectID).
 		Count(&count)
-
 	if count > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học đã tồn tại"})
 		return
@@ -192,16 +235,112 @@ func UpdateSubject(c *gin.Context) {
 
 	subject.Name = name
 	subject.Slug = slugValue
+	if input.Status != nil {
+		subject.Status = *input.Status
+	}
 
 	if err := config.DB.Save(&subject).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cập nhật thất bại"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cập nhật môn học thất bại"})
+		return
+	}
+
+	// === 2. Xử lý chương ===
+	existingChapterIDs := make(map[uuid.UUID]bool)
+	for _, ch := range subject.Chapters {
+		existingChapterIDs[ch.ID] = true
+	}
+
+	newChapterIDs := make(map[uuid.UUID]bool)
+
+	for _, chInput := range input.Chapters {
+		title := strings.TrimSpace(chInput.Title)
+		if title == "" {
+			continue
+		}
+
+		// Cập nhật chương cũ
+		if chInput.ID != nil {
+			var existing models.Chapter
+			if err := config.DB.First(&existing, "id = ? AND subject_id = ?", chInput.ID, subjectID).Error; err == nil {
+				existing.Title = title
+				existing.SortOrder = chInput.SortOrder
+				if err := config.DB.Save(&existing).Error; err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi cập nhật chương"})
+					return
+				}
+				newChapterIDs[existing.ID] = true
+			}
+		} else {
+			// Thêm mới chương
+			newChapter := models.Chapter{
+				SubjectID: subjectID,
+				Title:     title,
+				SortOrder: chInput.SortOrder,
+			}
+			if err := config.DB.Create(&newChapter).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi tạo chương mới"})
+				return
+			}
+			newChapterIDs[newChapter.ID] = true
+		}
+	}
+
+	// === 3. Xóa chương không còn trong danh sách ===
+	for oldID := range existingChapterIDs {
+		if !newChapterIDs[oldID] {
+			var podcastCount int64
+			if err := config.DB.Model(&models.Podcast{}).Where("chapter_id = ?", oldID).Count(&podcastCount).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi kiểm tra podcast của chương"})
+				return
+			}
+
+			if podcastCount > 0 {
+				var chapter models.Chapter
+				_ = config.DB.Select("title").First(&chapter, "id = ?", oldID)
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("Không thể xóa '%s' vì chương này có %d podcast liên quan", chapter.Title, podcastCount),
+				})
+				return
+			}
+
+			if err := config.DB.Delete(&models.Chapter{}, "id = ?", oldID).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi xóa chương"})
+				return
+			}
+		}
+	}
+
+	// === 4. Trả kết quả cập nhật ===
+	var updatedSubject models.Subject
+	if err := config.DB.Preload("Chapters").First(&updatedSubject, "id = ?", subjectID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tải lại dữ liệu sau khi cập nhật"})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Cập nhật thành công",
-		"subject": subject,
+		"subject": updatedSubject,
 	})
+}
+
+// GET /admin/chapters/:id/check-deletable
+func CheckChapterDeletable(c *gin.Context) {
+	idStr := c.Param("id")
+	chapterID, err := uuid.Parse(idStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	var count int64
+	config.DB.Model(&models.Podcast{}).Where("chapter_id = ?", chapterID).Count(&count)
+
+	if count > 0 {
+		c.JSON(http.StatusOK, gin.H{"can_delete": false, "message": fmt.Sprintf("Chương này có %d podcast, không thể xóa", count)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"can_delete": true})
 }
 
 // DELETE /admin/subjects/:id
