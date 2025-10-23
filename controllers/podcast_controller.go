@@ -119,11 +119,6 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	if err != nil || rateValue <= 0 {
 		rateValue = 1.0
 	}
-	pitchStr := c.DefaultPostForm("pitch", "0.0")
-	pitchValue, er := strconv.ParseFloat(pitchStr, 64)
-	if er != nil {
-		pitchValue = 0.0
-	}
 	// === 5 Gọi API xử lý tài liệu ===
 	authHeader := c.GetHeader("Authorization")
 	parts := strings.Split(authHeader, " ")
@@ -133,7 +128,7 @@ func CreatePodcastWithUpload(c *gin.Context) {
 	}
 	token := parts[1]
 
-	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue, pitchValue)
+	respData, err := services.CallUploadDocumentAPI(file, userIDStr, token, voice, rateValue)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi gọi UploadDocument", "details": err.Error()})
 		return

@@ -149,6 +149,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	// 	chapters.PUT("/:id", controllers.UpdateChapter)
 	// 	chapters.DELETE("/:id", controllers.DeleteChapter)
 	// }
+	admin.GET("/voices/vi", controllers.GetVietnameseVoices)
 
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)

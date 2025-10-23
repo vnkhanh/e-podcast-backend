@@ -137,13 +137,7 @@ func UploadDocument(c *gin.Context) {
 		}
 	}
 
-	pitch := 0.0
-	if pitchtr := c.PostForm("speaking_rate"); pitchtr != "" {
-		if parsed, err := strconv.ParseFloat(pitchtr, 64); err == nil && parsed > 0 {
-			pitch = parsed
-		}
-	}
-	audioData, err := services.SynthesizeText(cleanedContent, voice, rate, pitch)
+	audioData, err := services.SynthesizeText(cleanedContent, voice, rate)
 	if err != nil {
 		updateStatus("Lỗi tạo audio", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo audio", "details": err.Error()})
@@ -166,7 +160,7 @@ func UploadDocument(c *gin.Context) {
 	now := time.Now()
 	db.Model(&doc).Updates(map[string]interface{}{
 		"audio_url":    audioURL,
-		"summary": summary,
+		"summary":      summary,
 		"status":       "Hoàn thành",
 		"processed_at": &now,
 	})
@@ -176,7 +170,7 @@ func UploadDocument(c *gin.Context) {
 		"message":   "Tải lên thành công",
 		"tai_lieu":  doc,
 		"audio_url": audioURL,
-		"summary": summary,
+		"summary":   summary,
 	})
 }
 
