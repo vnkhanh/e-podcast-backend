@@ -50,16 +50,17 @@ func CleanWithGemini(text string) (string, error) {
 }
 
 func ExctractText(text string) (string, error) {
-	prompt := `Bạn là một Biên tập viên/Người đọc Audio Book chuyên nghiệp, có khả năng chuyển đổi văn bản phức tạp thành lời nói trôi chảy. 
+	prompt := `Bạn là một Biên tập viên/Người đọc Audio Book chuyên nghiệp, có khả năng chuyển đổi văn bản phức tạp thành lời nói trôi chảy.
 	Chuyển đổi toàn bộ nội dung văn bản đã trích xuất dưới đây thành một kịch bản đọc liền mạch (solo narration), sẵn sàng cho việc chuyển thành audio.
 	Yêu cầu:
-	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
-	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
-	3. Không sử dụng từ ngữ chuyên môn quá khó hiểu
-	4. Giọng văn trung tính, rõ ràng, có nhịp điệu (paced), và mang tính giáo dục. Giữ nguyên tính học thuật của nội dung
-	5. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG GÌ HẾT
-	6. Không bình luận, không giải thích, chỉ trả về nội dung phù hợp để chuyển thành audio podcast
-	7. Có thể bắt đầu bằng câu "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." để rõ ràng hơn
+	1. BỎ QUA TẤT CẢ các phần phụ trợ (như Lời giới thiệu, Mục lục, các thông tin chủ biên,...). Chỉ tập trung vào nội dung của các CHƯƠNG CHÍNH.
+	2. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng.
+	3. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan.
+	4. Nếu gặp từ ngữ chuyên môn quá khó hiểu, hãy diễn giải nó một cách đơn giản mà vẫn giữ được ý nghĩa học thuật. NẾU GẶP TỪ VIẾT TẮT, HÃY VIẾT RÕ RA VÀ KHÔNG ĐƯỢC VIẾT TẮT. VIẾT ĐÚNG CHÍNH TẢ
+	5. Giọng văn trung tính, rõ ràng, có nhịp điệu (paced), và mang tính giáo dục.
+	6. Bắt đầu kịch bản bằng câu: "Ở podcast này chúng ta sẽ cùng tìm hiểu về..." (thay vì đọc tiêu đề chương 1).
+	7. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt, KHÔNG GẠCH ĐẦU DÒNG.
+	8. Không bình luận, không giải thích ngoài lề, chỉ trả về nội dung kịch bản audio.
 	Đoạn văn bản cần viết lại:`
 
 	fullPrompt := prompt + "\n\n" + text
@@ -90,10 +91,10 @@ func CleanTextPipeline(rawText string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	extract, err := ExctractText(finalCleaned)
+	// extract, err := ExctractText(finalCleaned)
 	if err != nil {
 		return "", err
 	}
 
-	return extract, nil
+	return finalCleaned, nil
 }
