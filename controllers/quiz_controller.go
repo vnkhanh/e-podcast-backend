@@ -55,7 +55,7 @@ func GenerateQuizzesFromDocument(c *gin.Context) {
 	// Tạo QuizSet mới
 	quizSet := models.QuizSet{
 		PodcastID:   podcastID,
-		Title:       fmt.Sprintf("Quiz tự động từ tài liệu: %s", doc.OriginalName),
+		Title:       "Trắc nghiệm ôn tập",
 		Description: "Bộ câu hỏi trắc nghiệm sinh tự động từ nội dung tài liệu bằng Gemini",
 		CreatedBy:   userUUID,
 	}
@@ -101,7 +101,7 @@ Trả về JSON hợp lệ đúng cấu trúc:
   {
     "question": "Câu hỏi là gì?",
     "difficulty": "easy|medium|hard",
-    "hint": "Gợi ý liên quan đến nội dung câu hỏi.",
+    "hint": "Gợi ý liên quan đến nội dung câu hỏi và đáp án.",
     "options": [
       {"text": "Phương án A", "is_correct": true/false},
       {"text": "Phương án B", "is_correct": true/false},
