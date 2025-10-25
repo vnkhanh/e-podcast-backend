@@ -52,11 +52,13 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/documents/:id", controllers.GetDocumentDetail)
 
 		// Quiz routes
-		user.POST("/documents/:id/quizzes", middleware.AuthMiddleware(), controllers.GenerateQuizzesFromDocument)
-		user.GET("/podcasts/:id/quizzes", middleware.AuthMiddleware(), controllers.GetQuizQuestions)
-		user.POST("/podcasts/:id/quiz/submit", middleware.AuthMiddleware(), controllers.SubmitQuizAttempt)
-		user.GET("/quiz/attempt", middleware.AuthMiddleware(), controllers.GetUserQuizAttempts)
-		user.GET("/quiz/:attempt_id", middleware.AuthMiddleware(), controllers.GetQuizAttemptDetail)
+		user.POST("/documents/:id/quizzes", middleware.AuthMiddleware(), controllers.GenerateQuizzesFromDocument) // tạo quiz
+		user.GET("/podcasts/:id/quiz-sets", middleware.AuthMiddleware(), controllers.GetQuizSetsByPodcast)        // lấy ds quiz theo podcast id
+		user.GET("/quiz-sets/:id/questions", middleware.AuthMiddleware(), controllers.GetQuizQuestions)           // lấy ds câu hỏi của quiz
+		user.POST("/quiz-sets/:id/submit", middleware.AuthMiddleware(), controllers.SubmitQuizAttempt)            // gửi câu hỏi
+		user.GET("/quiz-attempts", middleware.AuthMiddleware(), controllers.GetUserQuizAttempts)                  // lấy
+		user.GET("/quiz-attempts/:attemptID", middleware.AuthMiddleware(), controllers.GetQuizAttemptDetail)      // gửi câu hỏi
+		user.GET("/quiz-sets/:id/attempts", middleware.AuthMiddleware(), controllers.GetQuizAttemptsBySet)        // lấy lịch sử làm quiz
 
 		// Listening
 		user.POST("/podcasts/:id/listen", middleware.OptionalAuthMiddleware(), controllers.IncreasePodcastListenCount)

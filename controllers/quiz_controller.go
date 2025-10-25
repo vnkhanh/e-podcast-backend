@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -51,16 +52,34 @@ func GenerateQuizzesFromDocument(c *gin.Context) {
 		podcastID = uuid.Nil
 	}
 
-	// XÓA QUIZ CŨ TRƯỚC KHI TẠO MỚI
-	if err := db.
-		Where("created_by = ? AND podcast_id = ?", userUUID, podcastID).
-		Delete(&models.QuizQuestion{}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa quiz cũ"})
+	// Tạo QuizSet mới
+	quizSet := models.QuizSet{
+		PodcastID:   podcastID,
+		Title:       fmt.Sprintf("Quiz tự động từ tài liệu: %s", doc.OriginalName),
+		Description: "Bộ câu hỏi trắc nghiệm sinh tự động từ nội dung tài liệu bằng Gemini",
+		CreatedBy:   userUUID,
+	}
+	if err := db.Create(&quizSet).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo QuizSet mới"})
 		return
 	}
 
 	allQuestions := []models.QuizQuestion{}
-	const maxQuestions = 30 // giới hạn tối đa 30 câu
+	const maxQuestions = 50
+
+	// Helper retry Gemini
+	retryGemini := func(prompt string, retries int) (string, error) {
+		var resp string
+		var err error
+		for i := 0; i < retries; i++ {
+			resp, err = services.GeminiGenerateText(prompt)
+			if err == nil {
+				return resp, nil
+			}
+			time.Sleep(time.Duration(i+1) * time.Second)
+		}
+		return "", err
+	}
 
 	for idx, chunk := range chunks {
 		if len(allQuestions) >= maxQuestions {
@@ -69,43 +88,45 @@ func GenerateQuizzesFromDocument(c *gin.Context) {
 
 		prompt := fmt.Sprintf(`
 Bạn là AI tạo câu hỏi trắc nghiệm giáo dục.
-Hãy tạo **1 đến 3 câu hỏi trắc nghiệm** từ đoạn văn sau bằng tiếng Việt.
+Hãy tạo **1 đến 3 câu hỏi trắc nghiệm** từ đoạn podcast sau bằng tiếng Việt.
 
-Mỗi câu hỏi có dạng JSON như sau:
+Yêu cầu:
+- Mỗi câu hỏi có 4 lựa chọn (A, B, C, D).
+- Ngẫu nhiên vị trí đáp án đúng.
+- Ghi rõ trường "is_correct": true cho lựa chọn đúng, false cho các lựa chọn sai.
+- Mỗi câu có trường "hint" (1-2 câu gợi ý giúp người học suy luận, không tiết lộ đáp án).
+
+Trả về JSON hợp lệ đúng cấu trúc:
 [
   {
     "question": "Câu hỏi là gì?",
     "difficulty": "easy|medium|hard",
+    "hint": "Gợi ý liên quan đến nội dung câu hỏi.",
     "options": [
-      {"text": "Phương án A", "is_correct": false},
-      {"text": "Phương án B", "is_correct": true},
-      {"text": "Phương án C", "is_correct": false},
-      {"text": "Phương án D", "is_correct": false}
+      {"text": "Phương án A", "is_correct": true/false},
+      {"text": "Phương án B", "is_correct": true/false},
+      {"text": "Phương án C", "is_correct": true/false},
+      {"text": "Phương án D", "is_correct": true/false}
     ]
   }
 ]
+
+Chỉ trả về JSON hợp lệ, không thêm bất kỳ văn bản nào khác.
 
 Đoạn văn số %d:
 %s
 `, idx+1, chunk)
 
-		var rawResp string
-		for try := 0; try < 3; try++ {
-			rawResp, err = services.GeminiGenerateText(prompt)
-			if err == nil {
-				break
-			}
-			time.Sleep(1 * time.Second)
-		}
+		rawResp, err := retryGemini(prompt, 3)
 		if err != nil {
 			fmt.Printf("Gemini lỗi ở đoạn %d: %v\n", idx+1, err)
 			continue
 		}
 
-		// Làm sạch JSON
+		// Làm sạch JSON Gemini
 		clean := strings.TrimSpace(rawResp)
-		clean = strings.TrimPrefix(clean, "```json")
-		clean = strings.TrimSuffix(clean, "```")
+		clean = strings.Trim(clean, "`")
+		clean = strings.TrimPrefix(clean, "json")
 		clean = strings.TrimSpace(clean)
 
 		type Option struct {
@@ -115,6 +136,7 @@ Mỗi câu hỏi có dạng JSON như sau:
 		type QA struct {
 			Question   string   `json:"question"`
 			Difficulty string   `json:"difficulty"`
+			Hint       string   `json:"hint"`
 			Options    []Option `json:"options"`
 		}
 
@@ -125,7 +147,7 @@ Mỗi câu hỏi có dạng JSON như sau:
 		}
 
 		for _, qa := range arr {
-			if qa.Question == "" || len(qa.Options) == 0 {
+			if qa.Question == "" || len(qa.Options) < 4 {
 				continue
 			}
 			if len(allQuestions) >= maxQuestions {
@@ -133,11 +155,11 @@ Mỗi câu hỏi có dạng JSON như sau:
 			}
 
 			q := models.QuizQuestion{
-				PodcastID:  podcastID,
-				CreatedBy:  userUUID,
+				QuizSetID:  quizSet.ID,
 				Question:   qa.Question,
 				SourceText: chunk,
 				Difficulty: qa.Difficulty,
+				Hint:       qa.Hint,
 				CreatedAt:  time.Now(),
 			}
 
@@ -165,53 +187,18 @@ Mỗi câu hỏi có dạng JSON như sau:
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    fmt.Sprintf("Tạo quiz thành công (%d câu hỏi, quiz cũ đã được làm mới)", len(allQuestions)),
-		"total":      len(allQuestions),
-		"chunks":     len(chunks),
-		"quizzes":    allQuestions,
-		"podcast_id": podcastID,
-	})
-}
-
-func GetQuizQuestions(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
-	podcastIDStr := c.Param("id")
-
-	podcastUUID, err := uuid.Parse(podcastIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "podcastId không hợp lệ"})
-		return
-	}
-
-	var questions []models.QuizQuestion
-	err = db.Preload("Options").
-		Preload("CreatedByUser", func(tx *gorm.DB) *gorm.DB {
-			return tx.Select("id", "full_name", "email") // chỉ load thông tin cơ bản
-		}).
-		Where("podcast_id = ?", podcastUUID).
-		Order("created_at ASC").
-		Find(&questions).Error
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể truy vấn quiz"})
-		return
-	}
-
-	if len(questions) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"message": "Chưa có câu hỏi nào cho podcast này"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"total":     len(questions),
-		"podcastID": podcastUUID,
-		"questions": questions,
+		"message":     fmt.Sprintf("Tạo quiz thành công (%d câu hỏi, quiz cũ đã được làm mới)", len(allQuestions)),
+		"quiz_set_id": quizSet.ID,
+		"total":       len(allQuestions),
+		"chunks":      len(chunks),
+		"podcast_id":  podcastID,
+		"quizzes":     allQuestions,
 	})
 }
 
 type AnswerInput struct {
-	QuestionID       uuid.UUID `json:"question_id"`
-	SelectedOptionID uuid.UUID `json:"option_id"`
+	QuestionID       uuid.UUID  `json:"question_id"`
+	SelectedOptionID *uuid.UUID `json:"option_id"`
 }
 
 // Nộp bài quiz
@@ -225,15 +212,16 @@ func SubmitQuizAttempt(c *gin.Context) {
 		return
 	}
 
-	podcastIDStr := c.Param("id")
-	podcastUUID, err := uuid.Parse(podcastIDStr)
+	quizSetIDStr := c.Param("id")
+	quizSetUUID, err := uuid.Parse(quizSetIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "podcast_id không hợp lệ"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "quiz_set_id không hợp lệ"})
 		return
 	}
 
 	var body struct {
-		Answers []AnswerInput `json:"answers"`
+		Answers     []AnswerInput `json:"answers"`
+		DurationSec int           `json:"duration_sec"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu gửi lên không hợp lệ"})
@@ -245,107 +233,137 @@ func SubmitQuizAttempt(c *gin.Context) {
 		return
 	}
 
-	// ✅ Lấy danh sách questionIDs từ body
+	// Lấy quiz set để có podcast_id
+	var quizSet models.QuizSet
+	if err := db.First(&quizSet, "id = ?", quizSetUUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy quiz set"})
+		return
+	}
+
+	// Lấy danh sách questionIDs
 	var questionIDs []uuid.UUID
 	for _, ans := range body.Answers {
 		questionIDs = append(questionIDs, ans.QuestionID)
 	}
 
-	// ✅ Lấy đáp án đúng từ DB
+	// Đảm bảo các question thuộc quiz set này
+	var count int64
+	if err := db.Model(&models.QuizQuestion{}).
+		Where("id IN ?", questionIDs).
+		Where("quiz_set_id = ?", quizSetUUID).
+		Count(&count).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể kiểm tra câu hỏi"})
+		return
+	}
+	if int(count) != len(questionIDs) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Có câu hỏi không thuộc quiz set này"})
+		return
+	}
+
+	// Lấy đáp án đúng
 	var correctOptions []models.QuizOption
-	if err := db.
-		Where("question_id IN ?", questionIDs).
+	if err := db.Where("question_id IN ?", questionIDs).
 		Where("is_correct = ?", true).
 		Find(&correctOptions).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy đáp án đúng"})
 		return
 	}
 
-	// ✅ Tạo map tra nhanh đáp án đúng
 	correctMap := make(map[uuid.UUID]uuid.UUID)
-	for _, opt := range correctOptions {
-		correctMap[opt.QuestionID] = opt.ID
+	for _, o := range correctOptions {
+		correctMap[o.QuestionID] = o.ID
 	}
 
-	// ✅ So sánh
-	total := len(body.Answers)
-	correctCount := 0
-
-	for _, ans := range body.Answers {
-		selected := ans.SelectedOptionID // 👈 dùng đúng field
-		correct := correctMap[ans.QuestionID]
-		if selected == correct {
-			correctCount++
-		}
-
-		// log debug
-		fmt.Printf("Câu hỏi %v | Chọn: %v | Đúng: %v\n", ans.QuestionID, selected, correct)
-	}
-
-	// ✅ Tính điểm (trên 10)
-	score := 0.0
-	if total > 0 {
-		score = (float64(correctCount) / float64(total)) * 10.0
-	}
-
-	// ✅ Lưu kết quả
+	// Tạo attempt
 	attempt := models.QuizAttempt{
-		UserID:    userUUID,
-		PodcastID: podcastUUID,
-		Score:     score,
-		TakenAt:   time.Now(),
+		UserID:      userUUID,
+		PodcastID:   quizSet.PodcastID,
+		QuizSetID:   quizSetUUID,
+		TakenAt:     time.Now(),
+		DurationSec: body.DurationSec,
 	}
 	if err := db.Create(&attempt).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu kết quả quiz"})
 		return
 	}
-	var results []models.AnswerResult
+
+	correctCount := 0
+	total := len(body.Answers)
+	results := make([]models.AnswerResult, 0, total)
+
 	for _, ans := range body.Answers {
+		// lấy question và options
 		var q models.QuizQuestion
 		db.Preload("Options").First(&q, "id = ?", ans.QuestionID)
 
-		var correct uuid.UUID
-		var selected uuid.UUID = ans.SelectedOptionID
-		for _, o := range q.Options {
-			if o.IsCorrect {
-				correct = o.ID
-				break
-			}
+		correctID := correctMap[q.ID]
+		selectedID := uuid.Nil
+		isCorrect := false
+
+		if ans.SelectedOptionID != nil {
+			selectedID = *ans.SelectedOptionID
+			isCorrect = (selectedID == correctID)
 		}
 
-		// Build options DTO
-		optionsDTO := []models.QuizOptionDTO{}
+		if isCorrect {
+			correctCount++
+		}
+
+		// lưu history
+		history := models.QuizAttemptHistory{
+			AttemptID:  attempt.ID,
+			QuestionID: q.ID,
+			SelectedID: selectedID, // nếu bỏ trống = uuid.Nil
+			IsCorrect:  isCorrect,
+			AnsweredAt: time.Now(),
+		}
+		db.Create(&history)
+
+		// build DTO
+		opts := make([]models.QuizOptionDTO, 0, len(q.Options))
 		for _, o := range q.Options {
-			optionsDTO = append(optionsDTO, models.QuizOptionDTO{
+			opts = append(opts, models.QuizOptionDTO{
 				ID:         o.ID,
 				OptionText: o.OptionText,
 				IsCorrect:  o.IsCorrect,
 			})
 		}
-
 		results = append(results, models.AnswerResult{
 			QuestionID: q.ID,
 			Question:   q.Question,
-			SelectedID: selected,
-			CorrectID:  correct,
-			IsCorrect:  selected == correct,
+			SelectedID: selectedID,
+			CorrectID:  correctID,
+			IsCorrect:  isCorrect,
 			SourceText: q.SourceText,
-			Options:    optionsDTO,
+			Options:    opts,
 		})
 	}
 
+	score := 0.0
+	if total > 0 {
+		score = (float64(correctCount) / float64(total)) * 10.0
+	}
+
+	// cập nhật điểm
+	db.Model(&attempt).Updates(models.QuizAttempt{
+		Score:          score,
+		CorrectCount:   correctCount,
+		IncorrectCount: total - correctCount,
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"message":       "Nộp quiz thành công",
-		"total":         len(body.Answers),
+		"total":         total,
 		"correct_count": correctCount,
 		"score":         score,
 		"attempt_id":    attempt.ID,
+		"quiz_set_id":   quizSetUUID,
+		"podcast_id":    quizSet.PodcastID,
 		"results":       results,
 	})
-
 }
 
-// 🔹 Lấy lịch sử làm quiz của user
+// Lấy lịch sử làm quiz của user
 func GetUserQuizAttempts(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	userIDStr := c.GetString("user_id")
@@ -361,10 +379,12 @@ func GetUserQuizAttempts(c *gin.Context) {
 		Preload("Podcast", func(tx *gorm.DB) *gorm.DB {
 			return tx.Select("id", "title", "description", "thumbnail_url")
 		}).
+		Preload("QuizSet", func(tx *gorm.DB) *gorm.DB {
+			return tx.Select("id", "title", "description", "podcast_id", "created_by")
+		}).
 		Where("user_id = ?", userUUID).
 		Order("taken_at DESC").
 		Find(&attempts).Error
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy lịch sử quiz"})
 		return
@@ -381,10 +401,157 @@ func GetUserQuizAttempts(c *gin.Context) {
 	})
 }
 
-// 🔹 Xem chi tiết 1 lần làm quiz
+// Lấy quiz set của podcast
+// Lấy danh sách câu hỏi trong 1 quiz set
+func GetQuizQuestions(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	quizSetIDStr := c.Param("id")
+
+	quizSetUUID, err := uuid.Parse(quizSetIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "quiz_set_id không hợp lệ"})
+		return
+	}
+
+	var questions []models.QuizQuestion
+	err = db.Preload("Options").
+		Preload("QuizSet").
+		Order("created_at ASC").
+		Where("quiz_set_id = ?", quizSetUUID).
+		Find(&questions).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể truy vấn câu hỏi"})
+		return
+	}
+
+	if len(questions) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"message": "Bộ trắc nghiệm này chưa có câu hỏi nào"})
+		return
+	}
+
+	// Lấy thông tin quiz set
+	var quizSet models.QuizSet
+	if err := db.Preload("Creator").First(&quizSet, "id = ?", quizSetUUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy quiz set"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"quiz_set":  quizSet,
+		"questions": questions,
+		"total":     len(questions),
+	})
+}
+
+// Lấy quiz set của podcast
+// Lấy tất cả quiz sets của 1 podcast
+func GetQuizSetsByPodcast(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	podcastIDStr := c.Param("id")
+
+	// Lấy user ID từ middleware (đã decode JWT)
+	userIDStr := c.GetString("user_id")
+	if userIDStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Không xác định được người dùng"})
+		return
+	}
+
+	userUUID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+		return
+	}
+
+	podcastUUID, err := uuid.Parse(podcastIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "podcast_id không hợp lệ"})
+		return
+	}
+
+	var quizSets []models.QuizSet
+	err = db.
+		Preload("Questions.Options").
+		Where("podcast_id = ? AND created_by = ?", podcastUUID, userUUID).
+		Order("created_at DESC").
+		Find(&quizSets).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách quiz sets"})
+		return
+	}
+
+	if len(quizSets) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"quiz_sets": []models.QuizSet{},
+			"message":   "Bạn chưa tạo bộ trắc nghiệm nào cho podcast này",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"quiz_sets": quizSets,
+		"total":     len(quizSets),
+	})
+}
+
+// Lấy lịch sử làm quiz
+func GetQuizAttemptsBySet(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	quizSetIDStr := c.Param("id")
+
+	// Lấy user đang đăng nhập
+	userIDStr := c.GetString("user_id")
+	if userIDStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Không xác định được người dùng"})
+		return
+	}
+	userUUID, _ := uuid.Parse(userIDStr)
+
+	quizSetUUID, err := uuid.Parse(quizSetIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "quiz_set_id không hợp lệ"})
+		return
+	}
+
+	var attempts []models.QuizAttempt
+	err = db.
+		Select("*").
+		Preload("Podcast", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, title")
+		}).
+		Where("user_id = ? AND quiz_set_id = ?", userUUID, quizSetUUID).
+		Order("taken_at DESC").
+		Find(&attempts).Error
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy lịch sử làm quiz"})
+		return
+	}
+
+	if len(attempts) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"attempts": []models.QuizAttempt{},
+			"message":  "Bạn chưa làm bài trắc nghiệm này lần nào",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"quiz_set_id": quizSetUUID,
+		"attempts":    attempts,
+		"total":       len(attempts),
+	})
+}
+
+// Lấy chỉ tiết lần làm
 func GetQuizAttemptDetail(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
-	attemptIDStr := c.Param("attempt_id")
+	attemptIDStr := c.Param("attemptID")
+
+	userIDStr := c.GetString("user_id")
+	if userIDStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Không xác định được người dùng"})
+		return
+	}
+	userUUID, _ := uuid.Parse(userIDStr)
 
 	attemptUUID, err := uuid.Parse(attemptIDStr)
 	if err != nil {
@@ -394,24 +561,64 @@ func GetQuizAttemptDetail(c *gin.Context) {
 
 	var attempt models.QuizAttempt
 	err = db.
-		Preload("Podcast", func(tx *gorm.DB) *gorm.DB {
-			return tx.Select("id", "title", "description", "thumbnail_url")
+		Preload("Podcast", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, title")
 		}).
-		Preload("User", func(tx *gorm.DB) *gorm.DB {
-			return tx.Select("id", "name", "email")
+		Preload("QuizSet", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, title, description")
 		}).
-		First(&attempt, "id = ?", attemptUUID).Error
-
+		Preload("Histories", func(db *gorm.DB) *gorm.DB {
+			return db.Order("answered_at ASC")
+		}).
+		Preload("Histories.Question").
+		Preload("Histories.Question.Options").
+		Preload("Histories.SelectedOption").
+		Where("id = ? AND user_id = ?", attemptUUID, userUUID).
+		First(&attempt).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy quiz attempt"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy lịch sử làm quiz này"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy chi tiết quiz"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy chi tiết lịch sử làm quiz"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"attempt": attempt,
+	// === Thêm phần xử lý bổ sung câu hỏi bị bỏ trống ===
+	var allQuestions []models.QuizQuestion
+	if err := db.Preload("Options").
+		Where("quiz_set_id = ?", attempt.QuizSetID).
+		Find(&allQuestions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách câu hỏi"})
+		return
+	}
+
+	// Map các câu hỏi đã có trong history
+	historyMap := make(map[uuid.UUID]models.QuizAttemptHistory)
+	for _, h := range attempt.Histories {
+		historyMap[h.QuestionID] = h
+	}
+
+	// Thêm những câu hỏi chưa có history
+	for _, q := range allQuestions {
+		if _, exists := historyMap[q.ID]; !exists {
+			blankHistory := models.QuizAttemptHistory{
+				ID:         uuid.New(),
+				AttemptID:  attempt.ID,
+				QuestionID: q.ID,
+				Question:   q,
+				IsCorrect:  false,
+				SelectedID: uuid.Nil,
+				AnsweredAt: attempt.TakenAt,
+			}
+			attempt.Histories = append(attempt.Histories, blankHistory)
+		}
+	}
+
+	// Sắp xếp lại Histories theo thứ tự câu hỏi
+	sort.SliceStable(attempt.Histories, func(i, j int) bool {
+		return attempt.Histories[i].Question.CreatedAt.Before(attempt.Histories[j].Question.CreatedAt)
 	})
+
+	c.JSON(http.StatusOK, gin.H{"attempt": attempt})
 }
