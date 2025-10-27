@@ -1,6 +1,7 @@
 package services
 
 import (
+	"log"
 	"regexp"
 	"strings"
 )
@@ -9,23 +10,18 @@ import (
 func PreCleanText(text string) string {
 	cleaned := text
 
-	// Xoá các dòng chứa "Mục lục" hoặc "Table of Contents"
 	reTOC := regexp.MustCompile(`(?i)^(.*mục lục.*|.*table of contents.*)$`)
 	cleaned = reTOC.ReplaceAllString(cleaned, "")
 
-	// Xoá các dòng chứa "Trang X" hoặc "Page X"
 	rePageNumber := regexp.MustCompile(`(?i)^.*(trang|page)[^\d]*\d+.*$`)
 	cleaned = rePageNumber.ReplaceAllString(cleaned, "")
 
-	// Xoá dòng chỉ có số, ký tự đặc biệt hoặc khoảng trắng
 	reSpecialLines := regexp.MustCompile(`^[\s\W\d]*$`)
 	cleaned = reSpecialLines.ReplaceAllString(cleaned, "")
 
-	// Xoá dòng có chứa code hoặc từ khoá lập trình
 	reCode := regexp.MustCompile(`(?i)^.*(const |function |class |<[^>]+>).*?$`)
 	cleaned = reCode.ReplaceAllString(cleaned, "")
 
-	// Xoá nhiều dòng trống liên tiếp
 	reMultiNewLine := regexp.MustCompile(`\n{2,}`)
 	cleaned = reMultiNewLine.ReplaceAllString(cleaned, "\n")
 
@@ -37,7 +33,6 @@ func CleanWithGemini(text string) (string, error) {
 	prompt := `Bạn là công cụ xử lý văn bản trích xuất từ tài liệu.
 	Hãy xử lý văn bản sau với yêu cầu:
 	- Xoá phần mục lục, các dòng chứa số trang, tiêu đề lặp lại
-	- Xoá code, ví dụ mã lệnh, hoặc các ký hiệu kỹ thuật
 	- Làm gọn văn bản: không có dòng trống thừa, không có ký tự lạ
 	- Ngắt đoạn hợp lý, dễ đọc, phù hợp để chuyển thành nội dung podcast
 	- Giữ nguyên nội dung, không thêm bớt, không giải thích
@@ -84,17 +79,97 @@ func SummaryText(text string) (string, error) {
 	return GeminiGenerateText(fullPrompt)
 }
 
-// CleanTextPipeline là pipeline chính: Regex + Gemini
+// CleanTextPipeline là pipeline chính: Regex + Gemini (có chia nhỏ)
 func CleanTextPipeline(rawText string) (string, error) {
 	preCleaned := PreCleanText(rawText)
+
+	totalLen := len(preCleaned)
+	log.Printf("[Cleaner] Tổng độ dài trước Gemini: %d ký tự", totalLen)
+
+	// Nếu văn bản quá dài, chia nhỏ để tránh vượt giới hạn token
+	const chunkSize = 50000 // ~50k ký tự mỗi đoạn (~15k tokens)
+	if totalLen > chunkSize {
+		chunks := splitTextByLength(preCleaned, chunkSize)
+		log.Printf("[Cleaner] Chia thành %d đoạn nhỏ để gửi Gemini...", len(chunks))
+
+		var combined strings.Builder
+		for i, chunk := range chunks {
+			log.Printf("[Cleaner] → Đang xử lý đoạn %d/%d (%d ký tự)", i+1, len(chunks), len(chunk))
+			cleanedChunk, err := CleanWithGemini(chunk)
+			if err != nil {
+				return "", err
+			}
+			combined.WriteString(cleanedChunk)
+			combined.WriteString("\n")
+		}
+
+		result := strings.TrimSpace(combined.String())
+		log.Printf("[Cleaner] Hoàn tất ghép lại (%d ký tự)", len(result))
+		return result, nil
+	}
+
+	// Nếu ngắn thì xử lý 1 lần
 	finalCleaned, err := CleanWithGemini(preCleaned)
 	if err != nil {
 		return "", err
 	}
-	// extract, err := ExctractText(finalCleaned)
+	log.Printf("[Cleaner] Hoàn tất làm sạch (%d ký tự)", len(finalCleaned))
+
+	return finalCleaned, nil
+}
+
+func ExtractTextPipeline(rawText string) (string, error) {
+	totalLen := len(rawText)
+	log.Printf("[Extract] Tổng độ dài trước Gemini: %d ký tự", totalLen)
+
+	const chunkSize = 50000
+	if totalLen > chunkSize {
+		chunks := splitTextByLength(rawText, chunkSize)
+		log.Printf("[Extract] Chia thành %d đoạn nhỏ để tạo kịch bản...", len(chunks))
+
+		var combined strings.Builder
+		for i, chunk := range chunks {
+			log.Printf("[Extract] → Đang xử lý đoạn %d/%d (%d ký tự)", i+1, len(chunks), len(chunk))
+			scriptChunk, err := ExctractText(chunk)
+			if err != nil {
+				return "", err
+			}
+			combined.WriteString(scriptChunk)
+			combined.WriteString("\n")
+		}
+
+		result := strings.TrimSpace(combined.String())
+		log.Printf("[Extract] Hoàn tất ghép kịch bản (%d ký tự)", len(result))
+		return result, nil
+	}
+
+	finalScript, err := ExctractText(rawText)
 	if err != nil {
 		return "", err
 	}
+	log.Printf("[Extract] Hoàn tất tạo kịch bản (%d ký tự)", len(finalScript))
+	return finalScript, nil
+}
 
-	return finalCleaned, nil
+// splitTextByLength chia văn bản dài thành nhiều đoạn nhỏ
+func splitTextByLength(text string, maxLen int) []string {
+	var parts []string
+	runes := []rune(text)
+
+	for i := 0; i < len(runes); {
+		end := i + maxLen
+		if end > len(runes) {
+			end = len(runes)
+		} else {
+			// tìm dấu kết thúc câu gần nhất
+			for end < len(runes) && runes[end] != '.' && runes[end] != '?' && runes[end] != '!' && end-i < maxLen+500 {
+				end++
+			}
+		}
+		part := strings.TrimSpace(string(runes[i:end]))
+		parts = append(parts, part)
+		i = end
+	}
+
+	return parts
 }

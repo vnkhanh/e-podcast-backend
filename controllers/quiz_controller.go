@@ -38,7 +38,7 @@ func GenerateQuizzesFromDocument(c *gin.Context) {
 	}
 
 	text := strings.TrimSpace(doc.ExtractedText)
-	chunks := SplitTextIntoChunksSmart(text, 900)
+	chunks := SplitTextIntoChunksSmart(text, 2000)
 	if len(chunks) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Không có nội dung để xử lý"})
 		return

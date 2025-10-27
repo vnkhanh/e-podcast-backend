@@ -1,9 +1,11 @@
 package controllers
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -67,12 +69,10 @@ func UploadDocument(c *gin.Context) {
 		return
 	}
 
-	// === Hàm tiện ích cập nhật trạng thái & gửi WS ===
+	// === Cập nhật trạng thái và WS ===
 	lastStatus := ""
 	lastProgress := 0.0
-
 	updateStatus := func(status string, progress float64, errorMsg string) {
-		// Gửi WS chỉ khi thật sự có thay đổi đáng kể
 		if status != lastStatus || math.Abs(progress-lastProgress) >= 5 || errorMsg != "" {
 			db.Model(&doc).Updates(map[string]interface{}{
 				"status":   status,
@@ -81,16 +81,15 @@ func UploadDocument(c *gin.Context) {
 			ws.SendStatusUpdate(doc.ID.String(), status, progress, errorMsg)
 			ws.BroadcastDocumentListChanged()
 			log.Printf("[Document %s] %s - %.0f%%", doc.OriginalName, status, progress)
-
 			lastStatus = status
 			lastProgress = progress
 		}
 	}
 
-	// --- Bắt đầu quy trình xử lý ---
+	// --- Bắt đầu xử lý ---
 	updateStatus("Đã tải lên", 0, "")
 
-	// --- Trích xuất nội dung ---
+	// --- 1 TRÍCH XUẤT ---
 	updateStatus("Đang trích xuất", 10, "")
 	noiDung, err := services.NormalizeInput(services.InputSource{
 		Type:       inputType,
@@ -102,6 +101,8 @@ func UploadDocument(c *gin.Context) {
 		return
 	}
 
+	// --- 2 LÀM SẠCH ---
+	updateStatus("Đang làm sạch", 25, "")
 	cleanedContent, err := services.CleanTextPipeline(noiDung)
 	if err != nil {
 		updateStatus("Lỗi làm sạch nội dung", 0, err.Error())
@@ -109,23 +110,29 @@ func UploadDocument(c *gin.Context) {
 		return
 	}
 
-	// Progress mượt từ 10 → 50
-	for p := 15; p <= 50; p += 10 {
-		updateStatus("Đang trích xuất", float64(p), "")
-		time.Sleep(200 * time.Millisecond)
-	}
 	db.Model(&doc).Update("extracted_text", cleanedContent)
-	updateStatus("Đang xử lý văn bản", 55, "")
 
+	// --- 3 VIẾT LẠI KỊCH BẢN AUDIO ---
+	updateStatus("Đang tạo kịch bản", 45, "")
+	scriptText, err := services.ExtractTextPipeline(cleanedContent)
+	if err != nil {
+		updateStatus("Lỗi tạo kịch bản audio", 0, err.Error())
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể viết lại nội dung audio", "details": err.Error()})
+		return
+	}
+	db.Model(&doc).Update("extracted_text", scriptText)
+
+	// --- 4 TÓM TẮT ---
+	updateStatus("Đang tạo tóm tắt", 55, "")
 	summary, err := services.SummaryText(cleanedContent)
 	if err != nil {
 		updateStatus("Lỗi tóm tắt nội dung", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tóm tắt nội dung", "details": err.Error()})
 		return
 	}
-	// --- Tạo audio ---
+
+	// --- 5 TẠO AUDIO ---
 	updateStatus("Đang tạo audio", 60, "")
-	// Lấy voice & rate
 	voice := c.PostForm("voice")
 	if voice == "" {
 		voice = "vi-VN-Chirp3-HD-Puck"
@@ -137,17 +144,30 @@ func UploadDocument(c *gin.Context) {
 		}
 	}
 
-	audioData, err := services.SynthesizeText(cleanedContent, voice, rate)
+	// === SINH AUDIO ===
+	audioData, err := services.SynthesizeText(scriptText, voice, rate)
 	if err != nil {
 		updateStatus("Lỗi tạo audio", 0, err.Error())
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo audio", "details": err.Error()})
 		return
 	}
-	// Tiến trình mượt 55 → 95
+
+	// Lưu tạm vào local trước khi upload (phòng mất dữ liệu)
+	tmpDir := "/app/tmp"
+	os.MkdirAll(tmpDir, 0o755)
+	tmpPath := filepath.Join(tmpDir, fmt.Sprintf("%s.mp3", docID.String()))
+
+	if err := os.WriteFile(tmpPath, audioData, 0o644); err != nil {
+		log.Printf("Không thể lưu file tạm: %v", err)
+	}
+
+	// --- Giả lập tiến độ upload ---
 	for p := 65; p < 95; p += 10 {
 		updateStatus("Đang lưu audio", float64(p), "")
 		time.Sleep(200 * time.Millisecond)
 	}
+
+	// === Upload lên Supabase ===
 	audioURL, err := utils.UploadAudioToSupabase(audioData, docID.String()+".mp3", "audio/mp3")
 	if err != nil {
 		updateStatus("Lỗi lưu audio", 0, err.Error())
@@ -155,7 +175,10 @@ func UploadDocument(c *gin.Context) {
 		return
 	}
 
-	// --- Hoàn tất ---
+	// Xóa file tạm sau khi upload thành công
+	// _ = os.Remove(tmpPath)
+
+	// --- 6 HOÀN THÀNH ---
 	updateStatus("Hoàn thành", 100, "")
 	now := time.Now()
 	db.Model(&doc).Updates(map[string]interface{}{
