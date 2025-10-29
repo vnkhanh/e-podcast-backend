@@ -66,12 +66,11 @@ func ExctractText(text string) (string, error) {
 func SummaryText(text string) (string, error) {
 	prompt := `Bạn là công cụ tóm tắt văn bản, hãy giúp tôi tóm tắt nội dung thành một đoạn văn một cách rõ ràng và ngắn gọn
 	Yêu cầu:
-	1. Không lược bỏ nội dung chính, không tự ý thêm thông tin không có trong văn bản, đảm bảo đủ nội dung quan trọng
-	2. Ngôn ngữ tự nhiên, gần gũi, không quá khô khan
-	3. Có thể thêm câu chuyển đoạn ngắn để mạch lạc hơn
-	4. Không sử dụng từ ngữ chuyên môn quá khó hiểu
-	5. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt
-	6. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt.
+	1. Chỉ tóm tắt các ý chính thôi, giống như phần giới thiệu cho đoạn văn bản tôi đã gửi
+	1. Không sử dụng từ ngữ chuyên môn quá khó hiểu
+	2. KHÔNG sử dụng markdown, KHÔNG in đậm, KHÔNG in nghiêng, chỉ trả về văn bản thuần tuý, KHÔNG thêm ký tự đặc biệt
+	3. Không bình luận, không giải thích, chỉ trả về nội dung tóm tắt.
+	4. Không viết các câu như "Bài viết này nói về,..." chỉ trả về nội dung đã tóm tắt thôi.
 	Đoạn văn bản cần viết lại:`
 
 	fullPrompt := prompt + "\n\n" + text
@@ -87,7 +86,7 @@ func CleanTextPipeline(rawText string) (string, error) {
 	log.Printf("[Cleaner] Tổng độ dài trước Gemini: %d ký tự", totalLen)
 
 	// Nếu văn bản quá dài, chia nhỏ để tránh vượt giới hạn token
-	const chunkSize = 50000 // ~50k ký tự mỗi đoạn (~15k tokens)
+	const chunkSize = 45000 // ~50k ký tự mỗi đoạn (~15k tokens)
 	if totalLen > chunkSize {
 		chunks := splitTextByLength(preCleaned, chunkSize)
 		log.Printf("[Cleaner] Chia thành %d đoạn nhỏ để gửi Gemini...", len(chunks))
@@ -122,7 +121,7 @@ func ExtractTextPipeline(rawText string) (string, error) {
 	totalLen := len(rawText)
 	log.Printf("[Extract] Tổng độ dài trước Gemini: %d ký tự", totalLen)
 
-	const chunkSize = 50000
+	const chunkSize = 45000
 	if totalLen > chunkSize {
 		chunks := splitTextByLength(rawText, chunkSize)
 		log.Printf("[Extract] Chia thành %d đoạn nhỏ để tạo kịch bản...", len(chunks))

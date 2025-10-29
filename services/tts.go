@@ -18,7 +18,7 @@ import (
 
 const maxChunkBytesLow = 4500
 
-var tmpDir = os.TempDir() // ✅ dùng thư mục tạm hợp lệ của hệ thống
+var tmpDir = os.TempDir()
 
 // SynthesizeText - Tổng hợp giọng nói, nén cực mạnh (<50 MB)
 func SynthesizeText(text, voice string, rate float64) ([]byte, error) {
@@ -45,7 +45,7 @@ func SynthesizeText(text, voice string, rate float64) ([]byte, error) {
 	tmpFiles := make([]string, len(chunks))
 	errs := make(chan error, len(chunks))
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 3) // tối đa 3 luồng song song
+	sem := make(chan struct{}, 3)
 
 	for i, chunk := range chunks {
 		wg.Add(1)
@@ -98,14 +98,9 @@ func SynthesizeText(text, voice string, rate float64) ([]byte, error) {
 		return nil, fmt.Errorf("merge failed: %w", err)
 	}
 
-	// ✅ FIX HEADER để Supabase nhận đúng thời lượng
-	if err := fixMP3Header(filepath.Join(tmpDir, fmt.Sprintf("merged_%d.mp3", os.Getpid()))); err != nil {
-		fmt.Println("⚠️  fixMP3Header error:", err)
-	}
-
 	compressed, err := ultraCompressAudio(merged)
 	if err != nil {
-		fmt.Println("Compression failed, returning merged file:", err)
+		fmt.Println("⚠️ Compression failed, returning merged file:", err)
 		return merged, nil
 	}
 
@@ -152,7 +147,7 @@ func splitTextToChunksByByte(text string, maxBytes int) []string {
 	return chunks
 }
 
-// mergeAudioFilesLow - Hợp nhất nhiều file OGG/OPUS thành 1 file MP3 16kHz, mono, bitrate thấp
+// mergeAudioFilesLow - CBR thực sự với minrate=maxrate=b:a
 func mergeAudioFilesLow(files []string) ([]byte, error) {
 	listFile := filepath.Join(tmpDir, fmt.Sprintf("merge_list_%d.txt", os.Getpid()))
 	outputFile := filepath.Join(tmpDir, fmt.Sprintf("merged_%d.mp3", os.Getpid()))
@@ -169,16 +164,21 @@ func mergeAudioFilesLow(files []string) ([]byte, error) {
 		return nil, err
 	}
 
-	// ✅ Thêm -write_xing 1 và -fflags +bitexact để header chính xác
+	// ✅ CRITICAL: minrate=maxrate=b:a → CBR thực sự
 	cmd := exec.Command("ffmpeg",
-		"-f", "concat", "-safe", "0",
+		"-f", "concat",
+		"-safe", "0",
 		"-i", listFile,
-		"-acodec", "libmp3lame",
-		"-b:a", "32k",
+		"-c:a", "libmp3lame",
+		"-b:a", "32k", // Target bitrate
+		"-minrate", "32k", // ✅ Min = target
+		"-maxrate", "32k", // ✅ Max = target → CBR
+		"-bufsize", "32k", // ✅ Buffer size = bitrate
 		"-ar", "16000",
 		"-ac", "1",
-		"-write_xing", "1",
-		"-fflags", "+bitexact",
+		"-id3v2_version", "3",
+		"-write_id3v1", "0",
+		"-map_metadata", "-1",
 		"-y", outputFile,
 	)
 
@@ -188,12 +188,18 @@ func mergeAudioFilesLow(files []string) ([]byte, error) {
 		return nil, fmt.Errorf("ffmpeg merge error: %v, %s", err, stderr.String())
 	}
 
+	stat, err := os.Stat(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("output file not found: %w", err)
+	}
+	fmt.Printf("✅ Merged CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
+
 	return os.ReadFile(outputFile)
 }
 
-// ultraCompressAudio - Nén cực mạnh (24kbps, mono, 16kHz)
+// ultraCompressAudio - CBR 24k với minrate=maxrate
 func ultraCompressAudio(data []byte) ([]byte, error) {
-	tmpIn := filepath.Join(tmpDir, fmt.Sprintf("in_%d.opus", os.Getpid()))
+	tmpIn := filepath.Join(tmpDir, fmt.Sprintf("in_%d.mp3", os.Getpid()))
 	tmpOut := filepath.Join(tmpDir, fmt.Sprintf("out_%d.mp3", os.Getpid()))
 	defer os.Remove(tmpIn)
 	defer os.Remove(tmpOut)
@@ -202,15 +208,19 @@ func ultraCompressAudio(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// ✅ CBR 24k thực sự
 	cmd := exec.Command("ffmpeg",
 		"-i", tmpIn,
-		"-codec:a", "libmp3lame",
+		"-c:a", "libmp3lame",
 		"-b:a", "24k",
+		"-minrate", "24k", // ✅ CBR enforcement
+		"-maxrate", "24k",
+		"-bufsize", "24k",
 		"-ar", "16000",
 		"-ac", "1",
-		"-q:a", "9",
-		"-write_xing", "1", // ✅ Bảo đảm header chính xác sau nén
-		"-fflags", "+bitexact",
+		"-id3v2_version", "3",
+		"-write_id3v1", "0",
+		"-map_metadata", "-1",
 		"-y",
 		tmpOut,
 	)
@@ -221,25 +231,13 @@ func ultraCompressAudio(data []byte) ([]byte, error) {
 		return nil, fmt.Errorf("ffmpeg compress error: %v, %s", err, stderr.String())
 	}
 
-	return os.ReadFile(tmpOut)
-}
-
-// fixMP3Header - Rebuild header duration để hiển thị đúng thời lượng
-func fixMP3Header(inputPath string) error {
-	temp := inputPath + ".fixed.mp3"
-	cmd := exec.Command("ffmpeg",
-		"-i", inputPath,
-		"-acodec", "copy",
-		"-write_xing", "1",
-		"-fflags", "+bitexact",
-		"-y", temp,
-	)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("fixMP3Header error: %v, %s", err, stderr.String())
+	stat, err := os.Stat(tmpOut)
+	if err != nil {
+		return nil, fmt.Errorf("compressed file not found: %w", err)
 	}
-	return os.Rename(temp, inputPath)
+	fmt.Printf("✅ Compressed CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
+
+	return os.ReadFile(tmpOut)
 }
 
 func cleanupTmp(files []string) {
