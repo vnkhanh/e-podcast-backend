@@ -15,6 +15,7 @@ import (
 // Request body cho việc cập nhật lịch sử nghe
 type SavePodcastHistoryRequest struct {
 	LastPosition int   `json:"last_position" binding:"required,min=0"`
+	Duration     int   `json:"duration" binding:"required,min=1"` // tổng thời lượng podcast
 	Completed    *bool `json:"completed,omitempty"`
 }
 
@@ -23,20 +24,17 @@ type SavePodcastHistoryRequest struct {
 func SavePodcastHistory(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 
-	// 🔑 Lấy user_id từ context (được set trong AuthMiddleware)
 	userIDStr := c.GetString("user_id")
 	if userIDStr == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
-
 	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
 		return
 	}
 
-	// 🎧 Lấy podcast_id từ URL param
 	podcastIDStr := c.Param("podcast_id")
 	podcastID, err := uuid.Parse(podcastIDStr)
 	if err != nil {
@@ -44,14 +42,13 @@ func SavePodcastHistory(c *gin.Context) {
 		return
 	}
 
-	// 🧾 Parse request body
 	var req SavePodcastHistoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	// 🧐 Kiểm tra podcast tồn tại
+	// Kiểm tra podcast tồn tại
 	var podcast models.Podcast
 	if err := db.First(&podcast, "id = ?", podcastID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -62,18 +59,17 @@ func SavePodcastHistory(c *gin.Context) {
 		return
 	}
 
-	// 🎧 Tìm lịch sử nghe cũ nếu có
 	var history models.ListeningHistory
 	result := db.Where("user_id = ? AND podcast_id = ?", userID, podcastID).First(&history)
 	now := time.Now()
 
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		// ➕ Tạo mới
+		// Tạo mới
 		history = models.ListeningHistory{
 			UserID:          userID,
 			PodcastID:       podcastID,
 			LastPosition:    req.LastPosition,
-			Duration:        req.LastPosition,
+			Duration:        req.Duration,
 			FirstListenedAt: now,
 			LastListenedAt:  now,
 			Completed:       false,
@@ -88,12 +84,14 @@ func SavePodcastHistory(c *gin.Context) {
 			return
 		}
 	} else if result.Error == nil {
-		// 🔄 Cập nhật
-		if req.LastPosition > history.LastPosition {
-			history.Duration += (req.LastPosition - history.LastPosition)
-		}
-		history.LastPosition = req.LastPosition
+		// Cập nhật
 		history.LastListenedAt = now
+		history.LastPosition = req.LastPosition
+
+		// Nếu duration từ client lớn hơn -> cập nhật
+		if req.Duration > history.Duration {
+			history.Duration = req.Duration
+		}
 
 		if req.Completed != nil && *req.Completed && !history.Completed {
 			history.Completed = true
@@ -109,9 +107,7 @@ func SavePodcastHistory(c *gin.Context) {
 		return
 	}
 
-	// 🔁 Trả về lịch sử kèm thông tin podcast
 	db.Preload("Podcast").First(&history, "id = ?", history.ID)
-
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Listening history saved successfully",
 		"data":    history,
@@ -123,7 +119,7 @@ func SavePodcastHistory(c *gin.Context) {
 func GetListeningHistory(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 
-	// 🔑 Lấy user_id từ context
+	// Lấy user_id từ context
 	userIDStr := c.GetString("user_id")
 	if userIDStr == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
@@ -136,7 +132,7 @@ func GetListeningHistory(c *gin.Context) {
 		return
 	}
 
-	// 📄 Pagination
+	// Pagination
 	limit := 20
 	if l := c.Query("limit"); l != "" {
 		if val, err := strconv.Atoi(l); err == nil && val > 0 && val <= 100 {
@@ -151,14 +147,14 @@ func GetListeningHistory(c *gin.Context) {
 		}
 	}
 
-	// 🔍 Xây dựng truy vấn chính
+	// Xây dựng truy vấn chính
 	query := db.Where("user_id = ?", userID).
 		Preload("Podcast.Categories").
 		Preload("Podcast.Tags").
 		Preload("Podcast.Topics").
 		Order("last_listened_at DESC")
 
-	// 🧩 Lọc theo trạng thái hoàn thành
+	// Lọc theo trạng thái hoàn thành
 	if completed := c.Query("completed"); completed != "" {
 		switch completed {
 		case "true":
@@ -168,18 +164,18 @@ func GetListeningHistory(c *gin.Context) {
 		}
 	}
 
-	// 🔢 Đếm tổng số bản ghi
+	// Đếm tổng số bản ghi
 	var total int64
 	db.Model(&models.ListeningHistory{}).Where("user_id = ?", userID).Count(&total)
 
-	// 📦 Lấy dữ liệu có phân trang
+	// Lấy dữ liệu có phân trang
 	var histories []models.ListeningHistory
 	if err := query.Limit(limit).Offset(offset).Find(&histories).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch listening history"})
 		return
 	}
 
-	// ✅ Trả kết quả
+	// Trả kết quả
 	c.JSON(http.StatusOK, gin.H{
 		"data":   histories,
 		"total":  total,
