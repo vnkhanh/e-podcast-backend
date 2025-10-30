@@ -482,3 +482,74 @@ func CreateChapter(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"success": true, "chapter": chapter})
 }
+
+/*========= USER ==========*/
+//Môn học phổ biến
+type SubjectStats struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	PodcastCount int    `json:"podcast_count"`
+	TotalViews   int    `json:"total_views"`
+	TotalLikes   int    `json:"total_likes"`
+}
+
+// API: Lấy 5 môn học phổ biến (status = true)
+func GetPopularSubjects(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	var results []SubjectStats
+
+	// Truy vấn gộp dữ liệu: subject → chapter → podcast
+	query := `
+	SELECT 
+		s.id,
+		s.name,
+		s.slug,
+		COUNT(p.id) AS podcast_count,
+		COALESCE(SUM(p.view_count), 0) AS total_views,
+		COALESCE(SUM(p.like_count), 0) AS total_likes
+	FROM subjects s
+	LEFT JOIN chapters c ON c.subject_id = s.id
+	LEFT JOIN podcasts p ON p.chapter_id = c.id AND p.status = 'published'
+	WHERE s.status = TRUE
+	GROUP BY s.id, s.name, s.slug
+	ORDER BY total_views DESC
+	LIMIT 5;
+	`
+
+	if err := db.Raw(query).Scan(&results).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Không thể lấy danh sách môn học phổ biến",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Lấy danh sách môn học phổ biến thành công",
+		"data":    results,
+	})
+}
+
+// Chi tiết môn học
+func GetSubjectDetailUser(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	slug := c.Param("slug")
+
+	var subject models.Subject
+	if err := db.Preload("Chapters.Podcasts", func(db *gorm.DB) *gorm.DB {
+		return db.Where("podcasts.status = ?", "published")
+	}).Where("slug = ? AND status = ?", slug, true).First(&subject).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"message": "Không tìm thấy môn học",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Lấy chi tiết môn học thành công",
+		"data":    subject,
+	})
+}

@@ -834,9 +834,25 @@ func GetPodcastByID(c *gin.Context) {
 		return
 	}
 
+	// Lấy danh sách chương của cùng môn học + preload danh sách podcast trong mỗi chương
+	var chapters []models.Chapter
+	if podcast.Chapter.ID != uuid.Nil {
+		if err := db.
+			Preload("Podcasts", func(db *gorm.DB) *gorm.DB {
+				return db.Where("status = ?", "published").Order("created_at ASC")
+			}).
+			Where("subject_id = ?", podcast.Chapter.SubjectID).
+			Order("sort_order ASC").
+			Find(&chapters).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách chương", "details": err.Error()})
+			return
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Lấy chi tiết podcast thành công",
-		"data":    podcast,
+		"message":  "Lấy chi tiết podcast thành công",
+		"data":     podcast,
+		"chapters": chapters,
 	})
 }
 

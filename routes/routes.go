@@ -51,6 +51,9 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/podcasts/:id/flashcards", middleware.AuthMiddleware(), controllers.GetFlashcardsByPodcast)
 		user.GET("/documents/:id", controllers.GetDocumentDetail)
 
+		user.GET("subjects/popular", controllers.GetPopularSubjects)
+		user.GET("/subjects/:slug", controllers.GetSubjectDetailUser)
+
 		// Quiz routes
 		user.POST("/documents/:id/quizzes", middleware.AuthMiddleware(), controllers.GenerateQuizzesFromDocument) // tạo quiz
 		user.GET("/podcasts/:id/quiz-sets", middleware.AuthMiddleware(), controllers.GetQuizSetsByPodcast)        // lấy ds quiz theo podcast id
