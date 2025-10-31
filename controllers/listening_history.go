@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -243,49 +244,70 @@ func GetPodcastHistory(c *gin.Context) {
 // DeletePodcastHistory xóa lịch sử nghe của một podcast
 // DELETE /api/user/account/listening-history/:podcast_id
 func DeletePodcastHistory(c *gin.Context) {
-	// Lấy user_id từ context
-	userIDInterface, exists := c.Get("user_id")
+	// Bước 1: Lấy user_id từ context
+	userIDValue, exists := c.Get("user_id")
 	if !exists {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 		return
 	}
 
-	userID, ok := userIDInterface.(uuid.UUID)
+	userIDStr, ok := userIDValue.(string)
 	if !ok {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid user ID format"})
 		return
 	}
 
-	// Lấy podcast_id từ URL param
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	// Bước 2: Lấy podcast_id từ URL param
 	podcastIDStr := c.Param("podcast_id")
 	podcastID, err := uuid.Parse(podcastIDStr)
 	if err != nil {
+		fmt.Println("[DeletePodcastHistory] Invalid podcast_id:", podcastIDStr, "Error:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid podcast_id"})
 		return
 	}
 
-	// Lấy DB instance
-	db, exists := c.Get("db")
+	// Bước 3: Lấy DB instance
+	dbValue, exists := c.Get("db")
 	if !exists {
+		fmt.Println("[DeletePodcastHistory] Database instance not found in context")
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database connection not found"})
 		return
 	}
-	dbInstance := db.(*gorm.DB)
-
-	// Xóa lịch sử
-	result := dbInstance.Where("user_id = ? AND podcast_id = ?", userID, podcastID).
-		Delete(&models.ListeningHistory{})
-
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete history"})
+	db, ok := dbValue.(*gorm.DB)
+	if !ok {
+		fmt.Println("[DeletePodcastHistory] Invalid DB instance type")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid database instance"})
 		return
 	}
 
+	// Log dữ liệu đầu vào
+	fmt.Printf("[DeletePodcastHistory] user_id=%v | podcast_id=%v\n", userID, podcastID)
+
+	// Bước 4: Thực hiện xóa
+	result := db.Where("user_id = ? AND podcast_id = ?", userID, podcastID).
+		Delete(&models.ListeningHistory{})
+
+	if result.Error != nil {
+		fmt.Println("[DeletePodcastHistory] DB error:", result.Error)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": result.Error.Error()})
+		return
+	}
+
+	// Bước 5: Kiểm tra có record nào bị xóa không
 	if result.RowsAffected == 0 {
+		fmt.Printf("[DeletePodcastHistory] No record found for user=%v podcast=%v\n", userID, podcastID)
 		c.JSON(http.StatusNotFound, gin.H{"error": "No history found"})
 		return
 	}
 
+	// Thành công
+	fmt.Printf("[DeletePodcastHistory] Deleted %d record(s)\n", result.RowsAffected)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Listening history deleted successfully",
 	})

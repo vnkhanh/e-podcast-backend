@@ -40,6 +40,12 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 			account.DELETE("/listening-history/:podcast_id", controllers.DeletePodcastHistory)
 			account.DELETE("/listening-history", controllers.ClearAllHistory)
 
+			// favorite
+			account.GET("/favorites", controllers.GetFavorites)
+			account.POST("/favorites/:podcast_id", controllers.AddFavorite)
+			account.DELETE("/favorites/:podcast_id", controllers.RemoveFavorite)
+			account.GET("/favorite/:podcast_id", controllers.CheckFavorite)
+
 		}
 		user.GET("/categories", controllers.GetCategoriesUser)
 		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)
@@ -67,11 +73,18 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.POST("/podcasts/:id/listen", middleware.OptionalAuthMiddleware(), controllers.IncreasePodcastListenCount)
 	}
 	admin := api.Group("/admin")
-	admin.Use(
-		middleware.AuthMiddleware(),
-		middleware.DBMiddleware(db),
-		middleware.RequireRoles("admin", "teacher"),
-	)
+	{
+		admin.Use(
+			middleware.AuthMiddleware(),
+			middleware.DBMiddleware(db),
+			middleware.RequireRoles("admin", "teacher"),
+		)
+		admin.GET("/notifications", controllers.GetNotifications)
+		admin.GET("/notifications/unread", controllers.GetUnreadCount)
+		admin.PUT("/notifications/:id/read", controllers.MarkNotificationAsRead)
+		admin.PUT("/notifications/mark-all-read", controllers.MarkAllAsRead)
+
+	}
 
 	// ==================== Quản lý môn học ====================
 	subjects := admin.Group("/subjects")
@@ -150,6 +163,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	}
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)
+	r.GET("/ws/user", ws.HandleUserWebSocket)
 
 	return r
 }

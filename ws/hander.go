@@ -5,9 +5,9 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/vnkhanh/e-podcast-backend/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/vnkhanh/e-podcast-backend/utils"
 )
 
 var upgrader = websocket.Upgrader{
@@ -101,5 +101,47 @@ func HandleGlobalWebSocket(c *gin.Context) {
 	}
 
 	H.UnregisterGlobal(conn)
+	conn.Close()
+}
+
+// WebSocket riêng cho user để nhận thông báo cá nhân
+func HandleUserWebSocket(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Thiếu token"})
+		return
+	}
+
+	claims, err := utils.VerifyToken(token)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Token không hợp lệ hoặc hết hạn"})
+		return
+	}
+
+	userID := claims.UserID
+	log.Printf("WebSocket User Connect - userID=%s\n", userID)
+
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Println("WebSocket upgrade thất bại:", err)
+		return
+	}
+
+	H.RegisterUser(userID, conn)
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte("Connected to personal WebSocket")); err != nil {
+		H.UnregisterUser(userID, conn)
+		conn.Close()
+		return
+	}
+
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			log.Printf("WebSocket User Disconnect - userID=%s\n", userID)
+			break
+		}
+	}
+
+	H.UnregisterUser(userID, conn)
 	conn.Close()
 }

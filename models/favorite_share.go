@@ -11,8 +11,8 @@ type Favorite struct {
 	PodcastID uuid.UUID `gorm:"type:uuid;primaryKey" json:"podcast_id"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 
-	User    User    `gorm:"constraint:OnDelete:CASCADE;"`
-	Podcast Podcast `gorm:"constraint:OnDelete:CASCADE;"`
+	User    User    `gorm:"constraint:OnDelete:CASCADE;" json:"user,omitempty"`
+	Podcast Podcast `gorm:"constraint:OnDelete:CASCADE;" json:"podcast,omitempty"`
 }
 
 type PodcastShare struct {

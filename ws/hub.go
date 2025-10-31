@@ -16,12 +16,14 @@ type Client struct {
 type Hub struct {
 	Clients       map[string]map[*websocket.Conn]*Client // Theo từng documentID
 	GlobalClients map[*websocket.Conn]*Client            // Dành cho broadcast chung
+	UserClients   map[string]map[*websocket.Conn]*Client // Theo từng userID
 	Mutex         sync.RWMutex
 }
 
 var H = Hub{
 	Clients:       make(map[string]map[*websocket.Conn]*Client),
 	GlobalClients: make(map[*websocket.Conn]*Client),
+	UserClients:   make(map[string]map[*websocket.Conn]*Client),
 }
 
 // Struct gửi trạng thái tiến trình của 1 tài liệu
@@ -66,6 +68,100 @@ func (h *Hub) RegisterGlobal(conn *websocket.Conn) {
 
 	go h.readGlobalPump(conn)
 	go h.writeGlobalPump(conn)
+}
+
+// Đăng ký kết nối theo userID
+func (h *Hub) RegisterUser(userID string, conn *websocket.Conn) {
+	h.Mutex.Lock()
+	defer h.Mutex.Unlock()
+
+	if _, ok := h.UserClients[userID]; !ok {
+		h.UserClients[userID] = make(map[*websocket.Conn]*Client)
+	}
+
+	client := &Client{
+		Conn: conn,
+		Send: make(chan []byte, 256),
+	}
+	h.UserClients[userID][conn] = client
+
+	go h.readUserPump(userID, conn)
+	go h.writeUserPump(userID, conn)
+}
+
+// Gửi message đến tất cả kết nối của 1 user
+func (h *Hub) BroadcastToUser(userID string, messageType int, data []byte) {
+	h.Mutex.RLock()
+	defer h.Mutex.RUnlock()
+
+	if clients, ok := h.UserClients[userID]; ok {
+		for _, client := range clients {
+			select {
+			case client.Send <- data:
+			default:
+			}
+		}
+	}
+}
+
+// Huỷ đăng ký theo userID
+func (h *Hub) UnregisterUser(userID string, conn *websocket.Conn) {
+	h.Mutex.Lock()
+	defer h.Mutex.Unlock()
+
+	if clients, ok := h.UserClients[userID]; ok {
+		if client, ok := clients[conn]; ok {
+			close(client.Send)
+			delete(clients, conn)
+		}
+		if len(clients) == 0 {
+			delete(h.UserClients, userID)
+		}
+	}
+}
+
+func (h *Hub) readUserPump(userID string, conn *websocket.Conn) {
+	defer h.UnregisterUser(userID, conn)
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+}
+
+func (h *Hub) writeUserPump(userID string, conn *websocket.Conn) {
+	h.Mutex.RLock()
+	clientsMap, ok := h.UserClients[userID]
+	if !ok {
+		h.Mutex.RUnlock()
+		return
+	}
+	client, ok := clientsMap[conn]
+	h.Mutex.RUnlock()
+	if !ok {
+		return
+	}
+
+	defer func() {
+		conn.WriteMessage(websocket.CloseMessage, []byte{})
+		conn.Close()
+		h.UnregisterUser(userID, conn)
+	}()
+
+	for msg := range client.Send {
+		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			break
+		}
+	}
+}
+
+func SendBadgeUpdate(userID string, unreadCount int64) {
+	update := map[string]interface{}{
+		"type":         "badge_update",
+		"unread_count": unreadCount,
+	}
+	data, _ := json.Marshal(update)
+	H.BroadcastToUser(userID, websocket.TextMessage, data)
 }
 
 // Broadcast theo documentID
