@@ -15,6 +15,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	r.GET("/health", controllers.HealthCheck)
 
 	api := r.Group("/api")
+	api.GET("/search", controllers.SearchAutocomplete(db))
+	api.GET("/search/full", controllers.SearchFullHandler(db))
 
 	auth := api.Group("/auth")
 	{
