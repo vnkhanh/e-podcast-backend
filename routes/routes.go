@@ -17,6 +17,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 	api := r.Group("/api")
 	api.GET("/search", controllers.SearchAutocomplete(db))
 	api.GET("/search/full", controllers.SearchFullHandler(db))
+	api.GET("/podcasts/:podcast_id/share-social", controllers.SharePodcastSocialHandler(db))
 
 	auth := api.Group("/auth")
 	{

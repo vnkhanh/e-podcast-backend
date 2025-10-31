@@ -3,6 +3,8 @@ package controllers
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/vnkhanh/e-podcast-backend/models"
@@ -191,4 +193,32 @@ func GetFavorites(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, favorites)
+}
+
+// Share
+func SharePodcastSocialHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		podcastID := c.Param("podcast_id")
+		podcastUUID, err := uuid.Parse(podcastID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Podcast ID không hợp lệ"})
+			return
+		}
+
+		// Lưu lại lượt chia sẻ (tuỳ chọn)
+		share := models.PodcastShare{
+			ID:        uuid.New(),
+			PodcastID: podcastUUID,
+			SharedAt:  time.Now(),
+		}
+		db.Create(&share)
+
+		url := os.Getenv("FE_BASE_URL")
+		// Trả về link chia sẻ
+		link := url + "/podcast/" + podcastID
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Link chia sẻ sẵn sàng",
+			"link":    link,
+		})
+	}
 }
