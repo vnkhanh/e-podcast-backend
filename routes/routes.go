@@ -86,7 +86,9 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		admin.GET("/notifications/unread", controllers.GetUnreadCount)
 		admin.PUT("/notifications/:id/read", controllers.MarkNotificationAsRead)
 		admin.PUT("/notifications/mark-all-read", controllers.MarkAllAsRead)
-
+		admin.DELETE("/notifications", controllers.DeleteAllNotifications)
+		admin.DELETE("/notifications/:id", controllers.DeleteNotification)
+		admin.DELETE("/notifications/read", controllers.DeleteReadNotifications)
 	}
 
 	// ==================== Quản lý môn học ====================
