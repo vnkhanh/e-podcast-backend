@@ -72,6 +72,11 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/quiz-attempts/:attemptID", middleware.AuthMiddleware(), controllers.GetQuizAttemptDetail)      // gửi câu hỏi
 		user.GET("/quiz-sets/:id/attempts", middleware.AuthMiddleware(), controllers.GetQuizAttemptsBySet)        // lấy lịch sử làm quiz
 
+		// Notes
+		user.POST("/notes", middleware.AuthMiddleware(), controllers.CreateNote)
+		user.GET("/podcasts/:id/notes", middleware.AuthMiddleware(), controllers.GetNotesByPodcast)
+		user.DELETE("/notes/:id", middleware.AuthMiddleware(), controllers.DeleteNote)
+
 		// Listening
 		user.POST("/podcasts/:id/listen", middleware.OptionalAuthMiddleware(), controllers.IncreasePodcastListenCount)
 	}

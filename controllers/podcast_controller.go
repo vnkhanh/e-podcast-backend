@@ -784,14 +784,12 @@ func GetPodcastsByCategory(c *gin.Context) {
 // GetFeaturedPodcasts trả về danh sách podcast nổi bật (7 ngày gần đây, sắp theo lượt thích & lượt nghe)
 func GetFeaturedPodcasts(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
-	sevenDaysAgo := time.Now().AddDate(0, 0, -7)
 
 	var podcasts []models.Podcast
 
 	// Lấy podcast được tạo trong 7 ngày gần đây, trạng thái published
 	if err := db.
 		Where("status = ?", "published").
-		Where("published_at >= ?", sevenDaysAgo).
 		Preload("Chapter").
 		Preload("Chapter.Subject").
 		Preload("Document").
