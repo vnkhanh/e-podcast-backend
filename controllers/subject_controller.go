@@ -538,9 +538,18 @@ func GetSubjectDetailUser(c *gin.Context) {
 	slug := c.Param("slug")
 
 	var subject models.Subject
-	if err := db.Preload("Chapters.Podcasts", func(db *gorm.DB) *gorm.DB {
-		return db.Where("podcasts.status = ?", "published")
-	}).Where("slug = ? AND status = ?", slug, true).First(&subject).Error; err != nil {
+	if err := db.
+		Preload("Chapters", func(db *gorm.DB) *gorm.DB {
+			return db.Order("CAST(substring(title from '[0-9]+') AS INTEGER) ASC, title ASC")
+		}).
+		Preload("Chapters.Podcasts", func(db *gorm.DB) *gorm.DB {
+			return db.
+				Where("podcasts.status = ?", "published").
+				Order("CAST(substring(title from '[0-9]+') AS INTEGER) ASC, title ASC")
+		}).
+		Where("slug = ? AND status = ?", slug, true).
+		First(&subject).Error; err != nil {
+
 		c.JSON(http.StatusNotFound, gin.H{
 			"message": "Không tìm thấy môn học",
 			"error":   err.Error(),

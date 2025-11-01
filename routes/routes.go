@@ -171,6 +171,28 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		users.DELETE("/:id", controllers.AdminDeleteUser)
 		users.PATCH("/:id/toggle-status", controllers.ToggleUserStatus)
 	}
+	// ==================== Quản lý content page ====================
+	pages := admin.Group("/pages")
+	{
+		pages.GET("", controllers.GetAllPages)
+		pages.GET("/:slug", controllers.GetPageBySlug)
+		pages.POST("", middleware.RequireRoles("admin"), controllers.CreatePage)
+		pages.PUT("/:slug", middleware.RequireRoles("admin"), controllers.UpdatePage)
+		pages.DELETE("/:slug", middleware.RequireRoles("admin"), controllers.DeletePage)
+	}
+	api.GET("/page/:slug", middleware.DBMiddleware(db), controllers.GetPageBySlug)
+
+	// ==================== Thống kê ====================
+	stats := admin.Group("/stats")
+	{
+		stats.GET("/overview", controllers.GetDashboardOverview)
+		stats.GET("/monthly-listens", controllers.GetMonthlyListens)
+		stats.GET("/new-users", controllers.GetNewUsers)
+		stats.GET("/top-podcasts", controllers.GetTopPodcasts)
+		stats.GET("/subject-breakdown", controllers.GetSubjectBreakdown)
+	}
+
+	// ==================== WebSocket ====================
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)
 	r.GET("/ws/user", ws.HandleUserWebSocket)

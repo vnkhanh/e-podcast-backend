@@ -550,6 +550,7 @@ func UpdatePodcast(c *gin.Context) {
 	title := c.PostForm("title")
 	description := c.PostForm("description")
 	status := c.PostForm("status")
+	summary := c.PostForm("summary")
 
 	// === 2 Xử lý Chapter (cho phép cập nhật hoặc tự tạo mới) ===
 	chapterIDStr := c.PostForm("chapter_id")
@@ -623,6 +624,9 @@ func UpdatePodcast(c *gin.Context) {
 			now := time.Now()
 			podcast.PublishedAt = &now
 		}
+	}
+	if summary != "" {
+		podcast.Summary = summary
 	}
 
 	podcast.UpdatedBy = &userUUID
@@ -809,6 +813,7 @@ func GetFeaturedPodcasts(c *gin.Context) {
 }
 
 // GetPodcastByID - Lấy chi tiết 1 podcast
+// GetPodcastByID - Lấy chi tiết 1 podcast
 func GetPodcastByID(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	id := c.Param("id")
@@ -832,17 +837,22 @@ func GetPodcastByID(c *gin.Context) {
 		return
 	}
 
-	// Lấy danh sách chương của cùng môn học + preload danh sách podcast trong mỗi chương
 	var chapters []models.Chapter
 	if podcast.Chapter.ID != uuid.Nil {
 		if err := db.
 			Preload("Podcasts", func(db *gorm.DB) *gorm.DB {
-				return db.Where("status = ?", "published").Order("created_at ASC")
+				return db.
+					Where("status = ?", "published").
+					Order("CAST(substring(title from '[0-9]+') AS INTEGER) ASC, title ASC")
 			}).
 			Where("subject_id = ?", podcast.Chapter.SubjectID).
-			Order("sort_order ASC").
+			Order("CAST(substring(title from '[0-9]+') AS INTEGER) ASC, title ASC").
 			Find(&chapters).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách chương", "details": err.Error()})
+
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Không thể lấy danh sách chương",
+				"details": err.Error(),
+			})
 			return
 		}
 	}
