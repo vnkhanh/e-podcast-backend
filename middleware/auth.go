@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/vnkhanh/e-podcast-backend/config"
+	"github.com/vnkhanh/e-podcast-backend/models"
 	"github.com/vnkhanh/e-podcast-backend/utils"
 )
 
@@ -40,6 +42,19 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Kiểm tra trạng thái user trong DB
+		var user models.User
+		if err := config.DB.Select("status").First(&user, "id = ?", claims.UserID).Error; err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Không tìm thấy người dùng"})
+			c.Abort()
+			return
+		}
+
+		if user.Status != nil && !*user.Status {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Tài khoản đã bị tạm khóa"})
+			c.Abort()
+			return
+		}
 		// Lưu thông tin vào context để controller dùng
 		c.Set("user_id", claims.UserID)
 		c.Set("role", claims.Role)

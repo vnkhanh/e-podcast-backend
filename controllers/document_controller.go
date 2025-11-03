@@ -199,7 +199,8 @@ func UploadDocument(c *gin.Context) {
 
 func GetDocuments(c *gin.Context) {
 	var documents []models.Document
-	query := config.DB.Model(&models.Document{})
+	query := config.DB.Model(&models.Document{}).Preload("User")
+
 	// Lấy userID và role từ context
 	userIDStr := c.GetString("user_id")
 	role := c.GetString("role")
@@ -215,26 +216,49 @@ func GetDocuments(c *gin.Context) {
 	}
 
 	// Phân quyền
-	if role == string(models.RoleLecturer) { // giảng viên
+	if role == string(models.RoleLecturer) {
+		// Giảng viên: chỉ thấy tài liệu của mình
 		query = query.Where("user_id = ?", userUUID)
-	} else if role == string(models.RoleAdmin) {
-		// admin: không thêm filter, lấy tất cả
 	}
 
-	// lọc theo trạng thái
-	if status := c.Query("status"); status != "" {
-		switch status {
-		case "Đã tải lên", "Đang trích xuất", "Đã trích xuất", "Đang tạo podcast", "Hoàn thành", "Lỗi":
-			query = query.Where("status = ?", status)
+	// Admin có thể lọc theo tên giảng viên
+	if role == string(models.RoleAdmin) {
+		if lecturer := c.Query("lecturer"); lecturer != "" {
+			query = query.Joins("JOIN users ON users.id = documents.user_id").
+				Where("users.full_name ILIKE ?", "%"+lecturer+"%")
 		}
 	}
 
-	// tìm kiếm theo tên
-	if search := c.Query("search"); search != "" {
-		query = query.Where("original_name LIKE ?", "%"+search+"%")
+	// Lọc theo trạng thái
+	if status := c.Query("status"); status != "" {
+		if status == "Lỗi" {
+			query = query.Where("documents.status LIKE ?", "%Lỗi%")
+		} else {
+			query = query.Where("documents.status = ?", status)
+		}
 	}
 
-	// phân trang
+	// Tìm kiếm theo tên tài liệu
+	if search := c.Query("search"); search != "" {
+		query = query.Where("original_name ILIKE ?", "%"+search+"%")
+	}
+
+	// Lọc theo ngày tạo (CreatedAt)
+	startDate := c.Query("start_date")
+	endDate := c.Query("end_date")
+
+	if startDate != "" && endDate != "" {
+		// Nếu cả 2 đều có → lọc trong khoảng
+		query = query.Where("documents.created_at BETWEEN ? AND ?", startDate, endDate)
+	} else if startDate != "" {
+		// Nếu chỉ có start_date
+		query = query.Where("documents.created_at >= ?", startDate)
+	} else if endDate != "" {
+		// Nếu chỉ có end_date
+		query = query.Where("documents.created_at <= ?", endDate)
+	}
+
+	// Phân trang
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
 	if page < 1 {
@@ -251,7 +275,9 @@ func GetDocuments(c *gin.Context) {
 		return
 	}
 
-	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&documents).Error; err != nil {
+	if err := query.Order("documents.created_at DESC").
+		Limit(limit).Offset(offset).
+		Find(&documents).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách tài liệu"})
 		return
 	}

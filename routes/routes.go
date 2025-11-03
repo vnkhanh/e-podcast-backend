@@ -87,6 +87,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 			middleware.DBMiddleware(db),
 			middleware.RequireRoles("admin", "teacher"),
 		)
+		admin.GET("/me", controllers.GetProfileUser)
 		admin.GET("/notifications", controllers.GetNotifications)
 		admin.GET("/notifications/unread", controllers.GetUnreadCount)
 		admin.PUT("/notifications/:id/read", controllers.MarkNotificationAsRead)

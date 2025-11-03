@@ -99,6 +99,10 @@ func Login(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Email hoặc mật khẩu không đúng"})
 		return
 	}
+	if user.Status != nil && !*user.Status {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Tài khoản của bạn đã bị tạm khóa"})
+		return
+	}
 
 	// Sinh JWT (truyền ID dạng string và Role)
 	token, err := utils.GenerateToken(user.ID.String(), string(user.Role))
@@ -158,6 +162,10 @@ func GoogleLogin(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo user Google"})
 			return
 		}
+	}
+	if user.Status != nil && !*user.Status {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Tài khoản của bạn đã bị tạm khóa"})
+		return
 	}
 
 	// Tạo JWT token: truyền ID dạng string

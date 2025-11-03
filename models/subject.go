@@ -16,4 +16,6 @@ type Subject struct {
 	CreatedAt time.Time  `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	Chapters  []Chapter  `gorm:"foreignKey:SubjectID" json:"chapters"`
+
+	User User `gorm:"foreignKey:CreatedBy" json:"user"`
 }

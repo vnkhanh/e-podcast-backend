@@ -69,63 +69,69 @@ func CreateSubject(c *gin.Context) {
 
 // GET /admin/subjects
 func GetSubjects(c *gin.Context) {
-	var subjects []models.Subject
-	query := config.DB.Model(&models.Subject{})
+	db := config.DB
 
-	// Lấy userID và role từ context
-	userIDStr := c.GetString("user_id")
 	role := c.GetString("role")
+	userIDStr := c.GetString("user_id")
 
-	userUUID, err := uuid.Parse(userIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
-		return
+	var subjects []models.Subject
+	query := db.Model(&models.Subject{}).
+		Preload("Chapters").
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, full_name, email")
+		})
+
+	// Nếu là giảng viên, chỉ thấy môn của mình
+	if role == string(models.RoleLecturer) {
+		query = query.Where("subjects.created_by = ?", userIDStr)
 	}
 
-	// Phân quyền
-	if role == string(models.RoleLecturer) { // giảng viên
-		query = query.Where("created_by = ?", userUUID)
+	// Nếu là admin, có thể lọc theo giảng viên
+	if role == string(models.RoleAdmin) {
+		query = query.Joins("JOIN users ON users.id = subjects.created_by")
+
+		if lecturer := c.Query("lecturer"); lecturer != "" {
+			query = query.Where("(users.full_name ILIKE ? OR users.email ILIKE ?)", "%"+lecturer+"%", "%"+lecturer+"%")
+		}
 	}
 
 	// Lọc theo trạng thái
 	if status := c.Query("status"); status != "" {
 		switch status {
 		case "true":
-			query = query.Where("status = ?", true)
+			query = query.Where("subjects.status = ?", true)
 		case "false":
-			query = query.Where("status = ?", false)
+			query = query.Where("subjects.status = ?", false)
 		}
 	}
 
-	// Tìm kiếm theo tên
+	// Tìm kiếm theo tên môn học
 	if search := c.Query("search"); search != "" {
-		query = query.Where("name ILIKE ?", "%"+search+"%")
+		query = query.Where("subjects.name ILIKE ?", "%"+search+"%")
 	}
 
-	// Lọc theo ngày tạo (from_date, to_date)
+	// Lọc theo ngày tạo
 	fromDateStr := c.Query("from_date")
 	toDateStr := c.Query("to_date")
-
 	if fromDateStr != "" || toDateStr != "" {
 		const layout = "2006-01-02"
-
 		if fromDateStr != "" && toDateStr != "" {
 			fromDate, err1 := time.Parse(layout, fromDateStr)
 			toDate, err2 := time.Parse(layout, toDateStr)
 			if err1 == nil && err2 == nil {
-				toDate = toDate.Add(24 * time.Hour) // tính đến hết ngày to_date
-				query = query.Where("created_at BETWEEN ? AND ?", fromDate, toDate)
+				toDate = toDate.Add(24 * time.Hour)
+				query = query.Where("subjects.created_at BETWEEN ? AND ?", fromDate, toDate)
 			}
 		} else if fromDateStr != "" {
 			fromDate, err := time.Parse(layout, fromDateStr)
 			if err == nil {
-				query = query.Where("created_at >= ?", fromDate)
+				query = query.Where("subjects.created_at >= ?", fromDate)
 			}
 		} else if toDateStr != "" {
 			toDate, err := time.Parse(layout, toDateStr)
 			if err == nil {
 				toDate = toDate.Add(24 * time.Hour)
-				query = query.Where("created_at < ?", toDate)
+				query = query.Where("subjects.created_at < ?", toDate)
 			}
 		}
 	}
@@ -147,7 +153,12 @@ func GetSubjects(c *gin.Context) {
 		return
 	}
 
-	if err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&subjects).Error; err != nil {
+	// Dữ liệu
+	if err := query.
+		Order("subjects.created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&subjects).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách môn học"})
 		return
 	}

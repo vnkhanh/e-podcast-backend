@@ -86,7 +86,7 @@ func CleanTextPipeline(rawText string) (string, error) {
 	log.Printf("[Cleaner] Tổng độ dài trước Gemini: %d ký tự", totalLen)
 
 	// Nếu văn bản quá dài, chia nhỏ để tránh vượt giới hạn token
-	const chunkSize = 45000 // ~50k ký tự mỗi đoạn (~15k tokens)
+	const chunkSize = 40000 // ~50k ký tự mỗi đoạn (~15k tokens)
 	if totalLen > chunkSize {
 		chunks := splitTextByLength(preCleaned, chunkSize)
 		log.Printf("[Cleaner] Chia thành %d đoạn nhỏ để gửi Gemini...", len(chunks))
@@ -121,7 +121,7 @@ func ExtractTextPipeline(rawText string) (string, error) {
 	totalLen := len(rawText)
 	log.Printf("[Extract] Tổng độ dài trước Gemini: %d ký tự", totalLen)
 
-	const chunkSize = 45000
+	const chunkSize = 40000
 	if totalLen > chunkSize {
 		chunks := splitTextByLength(rawText, chunkSize)
 		log.Printf("[Extract] Chia thành %d đoạn nhỏ để tạo kịch bản...", len(chunks))
