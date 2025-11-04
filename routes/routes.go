@@ -88,13 +88,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 			middleware.RequireRoles("admin", "teacher"),
 		)
 		admin.GET("/me", controllers.GetProfileUser)
-		admin.GET("/notifications", controllers.GetNotifications)
-		admin.GET("/notifications/unread", controllers.GetUnreadCount)
-		admin.PUT("/notifications/:id/read", controllers.MarkNotificationAsRead)
-		admin.PUT("/notifications/mark-all-read", controllers.MarkAllAsRead)
-		admin.DELETE("/notifications", controllers.DeleteAllNotifications)
-		admin.DELETE("/notifications/:id", controllers.DeleteNotification)
-		admin.DELETE("/notifications/read", controllers.DeleteReadNotifications)
+
 	}
 
 	// ==================== Quản lý môn học ====================
@@ -199,6 +193,19 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		comments.POST("", middleware.AuthMiddleware(), controllers.CreateComment)
 		comments.GET("/podcasts/:id", controllers.GetComments)
 		comments.DELETE("/:id", middleware.AuthMiddleware(), controllers.DeleteComment)
+	}
+
+	// ==================== Thông báo ====================
+	notifications := api.Group("/notifications")
+	{
+		notifications.Use(middleware.AuthMiddleware(), middleware.DBMiddleware(db))
+		notifications.GET("", controllers.GetNotifications)
+		notifications.GET("/unread", controllers.GetUnreadCount)
+		notifications.PUT("/:id/read", controllers.MarkNotificationAsRead)
+		notifications.PUT("/mark-all-read", controllers.MarkAllAsRead)
+		notifications.DELETE("", controllers.DeleteAllNotifications)
+		notifications.DELETE("/:id", controllers.DeleteNotification)
+		notifications.DELETE("/read", controllers.DeleteReadNotifications)
 	}
 	// ==================== WebSocket ====================
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)

@@ -13,22 +13,31 @@ import (
 	"gorm.io/gorm"
 )
 
-// Gửi thông báo realtime + lưu DB
-func notifyComment(db *gorm.DB, userID uuid.UUID, title, message, notifType string) {
+// Gửi thông báo realtime + lưu DB với thông tin navigation
+func notifyComment(db *gorm.DB, userID uuid.UUID, title, message, notifType string, podcastID uuid.UUID, commentID *uuid.UUID) {
 	notif := models.Notification{
-		UserID:  userID,
-		Title:   title,
-		Message: message,
-		Type:    notifType,
+		UserID:    userID,
+		Title:     title,
+		Message:   message,
+		Type:      notifType,
+		PodcastID: &podcastID, // Lưu podcast_id
+		CommentID: commentID,  // Lưu comment_id nếu có
 	}
 	db.Create(&notif)
 
-	// Gửi realtime notification
+	// Gửi realtime notification với đầy đủ thông tin
 	data := map[string]interface{}{
-		"type":    notifType,
-		"title":   title,
-		"message": message,
+		"type":       notifType,
+		"title":      title,
+		"message":    message,
+		"podcast_id": podcastID.String(),
+		"id":         notif.ID.String(), // Thêm notification ID
 	}
+
+	if commentID != nil {
+		data["comment_id"] = commentID.String() // Thêm comment_id nếu có
+	}
+
 	jsonData, _ := json.Marshal(data)
 	ws.H.BroadcastToUser(userID.String(), websocket.TextMessage, jsonData)
 
@@ -45,7 +54,7 @@ type CreateCommentRequest struct {
 	ParentID  *string `json:"parent_id,omitempty"`
 }
 
-// Tạo bình luận hoặc trả lời
+// Tạo bình luận với notification có đủ thông tin
 func CreateComment(c *gin.Context) {
 	var req CreateCommentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -53,7 +62,6 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Lấy user từ context
 	userIDStr, ok := c.Get("user_id")
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Không tìm thấy thông tin người dùng"})
@@ -65,21 +73,18 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Lấy thông tin người dùng (bao gồm role)
 	var user models.User
 	if err := config.DB.Select("id", "full_name", "role").First(&user, "id = ?", userID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy thông tin người dùng"})
 		return
 	}
 
-	// Parse podcast_id
 	podcastID, err := uuid.Parse(req.PodcastID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "PodcastID không hợp lệ"})
 		return
 	}
 
-	// Parse parent_id nếu có
 	var parentID *uuid.UUID
 	if req.ParentID != nil {
 		if id, err := uuid.Parse(*req.ParentID); err == nil {
@@ -87,7 +92,6 @@ func CreateComment(c *gin.Context) {
 		}
 	}
 
-	// Tạo comment
 	comment := models.Comment{
 		PodcastID: podcastID,
 		UserID:    userID,
@@ -99,10 +103,8 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
-	// Load user vào comment (Preload sẽ lấy đầy đủ trường user)
 	config.DB.Preload("User").First(&comment, "id = ?", comment.ID)
 
-	// Format dữ liệu phản hồi (bao gồm parent_id và replies rỗng)
 	role := ""
 	switch comment.User.Role {
 	case "admin":
@@ -137,24 +139,24 @@ func CreateComment(c *gin.Context) {
 	wsData, _ := json.Marshal(data)
 	ws.H.Broadcast(podcastID.String(), websocket.TextMessage, wsData)
 
-	// Thông báo cho chủ podcast
+	// Thông báo cho chủ podcast (có comment_id)
 	var podcast models.Podcast
 	if err := config.DB.First(&podcast, "id = ?", podcastID).Error; err == nil {
 		if podcast.CreatedBy != userID {
 			title := "Bình luận mới về podcast của bạn"
 			message := user.FullName + " đã bình luận: " + req.Content
-			notifyComment(config.DB, podcast.CreatedBy, title, message, "comment_notification")
+			notifyComment(config.DB, podcast.CreatedBy, title, message, "comment_notification", podcastID, &comment.ID)
 		}
 	}
 
-	// Nếu là reply, thông báo cho người bị reply
+	// Nếu là reply, thông báo cho người bị reply (có comment_id)
 	if parentID != nil {
 		var parent models.Comment
 		if err := config.DB.Preload("User").First(&parent, "id = ?", *parentID).Error; err == nil {
 			if parent.UserID != userID {
 				title := "Ai đó đã trả lời bình luận của bạn"
 				message := user.FullName + " đã trả lời: " + req.Content
-				notifyComment(config.DB, parent.UserID, title, message, "reply_notification")
+				notifyComment(config.DB, parent.UserID, title, message, "reply_notification", podcastID, &comment.ID)
 			}
 		}
 	}
@@ -179,7 +181,6 @@ func GetComments(c *gin.Context) {
 		return
 	}
 
-	// Đệ quy lấy replies
 	var loadReplies func(comment *models.Comment)
 	loadReplies = func(comment *models.Comment) {
 		var replies []models.Comment
@@ -200,7 +201,6 @@ func GetComments(c *gin.Context) {
 		loadReplies(&rootComments[i])
 	}
 
-	// Format trả về
 	type CommentResponse struct {
 		ID        uuid.UUID         `json:"id"`
 		PodcastID uuid.UUID         `json:"podcast_id"`
@@ -265,7 +265,6 @@ func DeleteComment(c *gin.Context) {
 		return
 	}
 
-	// Kiểm tra quyền xóa
 	if comment.UserID != userID {
 		var user models.User
 		if err := db.Select("role").First(&user, "id = ?", userID).Error; err != nil || user.Role != models.RoleAdmin {
@@ -274,7 +273,6 @@ func DeleteComment(c *gin.Context) {
 		}
 	}
 
-	// Hàm đệ quy xóa toàn bộ reply con
 	var deleteReplies func(parentID uuid.UUID)
 	deleteReplies = func(parentID uuid.UUID) {
 		var replies []models.Comment
@@ -286,19 +284,16 @@ func DeleteComment(c *gin.Context) {
 		}
 	}
 
-	// Xóa các reply trước
 	deleteReplies(comment.ID)
 
-	// Xóa comment chính
 	if err := db.Delete(&comment).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa bình luận"})
 		return
 	}
 
-	// GỬI REALTIME EVENT "delete_comment" với comment_id dạng STRING
 	data := map[string]interface{}{
 		"type":       "delete_comment",
-		"comment_id": comment.ID.String(), // QUAN TRỌNG: phải convert UUID sang string
+		"comment_id": comment.ID.String(),
 		"podcast_id": comment.PodcastID.String(),
 	}
 	jsonData, _ := json.Marshal(data)
