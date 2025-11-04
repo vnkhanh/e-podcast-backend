@@ -75,6 +75,15 @@ func (h *Hub) RegisterUser(userID string, conn *websocket.Conn) {
 	h.Mutex.Lock()
 	defer h.Mutex.Unlock()
 
+	// Nếu user đã có connection cũ thì đóng hết
+	if clients, ok := h.UserClients[userID]; ok {
+		for oldConn, client := range clients {
+			close(client.Send)
+			oldConn.Close()
+			delete(clients, oldConn)
+		}
+	}
+
 	if _, ok := h.UserClients[userID]; !ok {
 		h.UserClients[userID] = make(map[*websocket.Conn]*Client)
 	}
@@ -83,10 +92,13 @@ func (h *Hub) RegisterUser(userID string, conn *websocket.Conn) {
 		Conn: conn,
 		Send: make(chan []byte, 256),
 	}
+
 	h.UserClients[userID][conn] = client
 
 	go h.readUserPump(userID, conn)
 	go h.writeUserPump(userID, conn)
+
+	log.Printf("RegisterUser: %s (%d connections active)", userID, len(h.UserClients[userID]))
 }
 
 // Gửi message đến tất cả kết nối của 1 user

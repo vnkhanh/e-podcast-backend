@@ -73,6 +73,7 @@ func InitDB() {
 		&models.Chapter{},
 		&models.Notification{},
 		&models.ContentPage{},
+		&models.Comment{},
 	)
 	if err != nil {
 		log.Fatal("autoMigrate lỗi: ", err)

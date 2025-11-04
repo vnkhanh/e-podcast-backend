@@ -193,8 +193,16 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		stats.GET("/subject-breakdown", controllers.GetSubjectBreakdown)
 	}
 
+	// ==================== Bình luận ====================
+	comments := api.Group("/comments")
+	{
+		comments.POST("", middleware.AuthMiddleware(), controllers.CreateComment)
+		comments.GET("/podcasts/:id", controllers.GetComments)
+		comments.DELETE("/:id", middleware.AuthMiddleware(), controllers.DeleteComment)
+	}
 	// ==================== WebSocket ====================
 	r.GET("/ws/document/:id", ws.HandleDocumentWebSocket)
+	r.GET("/ws/podcast/:id", ws.HandlePodcastWebSocket)
 	r.GET("/ws/status", ws.HandleGlobalWebSocket)
 	r.GET("/ws/user", ws.HandleUserWebSocket)
 
