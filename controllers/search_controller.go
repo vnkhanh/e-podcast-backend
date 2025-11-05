@@ -10,9 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// -----------------------------
 // Struct trả về
-// -----------------------------
 type SearchFullResult struct {
 	ID          string `json:"id"`
 	Title       string `json:"title,omitempty"`
@@ -20,6 +18,7 @@ type SearchFullResult struct {
 	Type        string `json:"type"`                  // podcast | subject
 	Description string `json:"description,omitempty"` // podcast description
 	Slug        string `json:"slug,omitempty"`        // subject slug
+	CoverImage  string `json:"cover_image,omitempty"` // podcast cover image
 }
 
 type SearchFullResponse struct {
@@ -37,9 +36,7 @@ type SearchResult struct {
 	Slug  string `json:"slug,omitempty"`  // subject slug
 }
 
-// -----------------------------
 // Search Full (search page)
-// -----------------------------
 func SearchFullHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query := strings.TrimSpace(c.Query("query"))
@@ -89,6 +86,7 @@ func SearchFullHandler(db *gorm.DB) gin.HandlerFunc {
 				Title:       p.Title,
 				Type:        "podcast",
 				Description: p.Description,
+				CoverImage:  p.CoverImage,
 			})
 		}
 		for _, s := range subjects {
@@ -109,9 +107,7 @@ func SearchFullHandler(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// -----------------------------
 // Search Autocomplete (gợi ý khi nhập)
-// -----------------------------
 func SearchAutocomplete(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query := strings.TrimSpace(c.Query("query"))

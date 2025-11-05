@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -543,11 +544,12 @@ func GetPopularSubjects(c *gin.Context) {
 	})
 }
 
-// Chi tiết môn học
+// Chi tiết môn học (có tiến độ nếu người dùng đã đăng nhập)
 func GetSubjectDetailUser(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	slug := c.Param("slug")
 
+	// Lấy thông tin môn học
 	var subject models.Subject
 	if err := db.
 		Preload("Chapters", func(db *gorm.DB) *gorm.DB {
@@ -568,8 +570,197 @@ func GetSubjectDetailUser(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	// Mặc định dữ liệu trả về
+	response := gin.H{
 		"message": "Lấy chi tiết môn học thành công",
 		"data":    subject,
+	}
+
+	// Nếu có user đăng nhập → tính tiến độ
+	userID, exists := c.Get("user_id")
+	if exists {
+		var totalPodcasts int64
+		var completedCount int64
+
+		// Tổng số podcast trong môn học
+		db.Model(&models.Podcast{}).
+			Joins("JOIN chapters ON chapters.id = podcasts.chapter_id").
+			Where("chapters.subject_id = ?", subject.ID).
+			Count(&totalPodcasts)
+
+		// Số podcast đã hoàn thành
+		db.Model(&models.ListeningHistory{}).
+			Joins("JOIN podcasts ON podcasts.id = listening_histories.podcast_id").
+			Joins("JOIN chapters ON chapters.id = podcasts.chapter_id").
+			Where("listening_histories.user_id = ? AND chapters.subject_id = ? AND listening_histories.completed = TRUE",
+				userID, subject.ID).
+			Count(&completedCount)
+
+		overallProgress := 0.0
+		if totalPodcasts > 0 {
+			overallProgress = (float64(completedCount) / float64(totalPodcasts)) * 100
+		}
+
+		// Tiến độ theo từng chương
+		var chapterProgress []struct {
+			ChapterID uuid.UUID `json:"chapter_id"`
+			Title     string    `json:"title"`
+			Total     int64     `json:"total"`
+			Done      int64     `json:"done"`
+			Progress  float64   `json:"progress"`
+		}
+
+		db.Table("chapters").
+			Select(`
+				chapters.id AS chapter_id,
+				chapters.title AS title,
+				COUNT(podcasts.id) AS total,
+				COALESCE(SUM(CASE WHEN listening_histories.completed = TRUE THEN 1 ELSE 0 END), 0) AS done
+			`).
+			Joins("LEFT JOIN podcasts ON podcasts.chapter_id = chapters.id").
+			Joins("LEFT JOIN listening_histories ON listening_histories.podcast_id = podcasts.id AND listening_histories.user_id = ?", userID).
+			Where("chapters.subject_id = ?", subject.ID).
+			Group("chapters.id").
+			Order("MIN(chapters.created_at) ASC").
+			Scan(&chapterProgress)
+
+		for i := range chapterProgress {
+			if chapterProgress[i].Total > 0 {
+				chapterProgress[i].Progress = (float64(chapterProgress[i].Done) / float64(chapterProgress[i].Total)) * 100
+			}
+		}
+
+		// Thêm vào response
+		response["overall_progress"] = overallProgress
+		response["chapter_progress"] = chapterProgress
+	}
+
+	// Trả kết quả cuối cùng
+	c.JSON(http.StatusOK, response)
+}
+
+// Danh sách môn học + tiến độ học tập (nếu có user)
+func GetAllSubjectsUser(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+
+	search := c.Query("search")
+	sortOrder := c.DefaultQuery("sort", "az")
+	page := c.DefaultQuery("page", "1")
+	limit := c.DefaultQuery("limit", "10")
+
+	pageNum, _ := strconv.Atoi(page)
+	limitNum, _ := strconv.Atoi(limit)
+	if pageNum < 1 {
+		pageNum = 1
+	}
+	offset := (pageNum - 1) * limitNum
+
+	// Tạo base query (bắt đầu từ subjects)
+	baseQuery := db.Table("subjects").
+		Select("DISTINCT subjects.id, subjects.name, subjects.slug, subjects.status, subjects.created_at, subjects.updated_at, subjects.created_by, subjects.updated_by").
+		Joins("LEFT JOIN chapters ON chapters.subject_id = subjects.id").
+		Where("subjects.status = ?", true)
+
+	// Nếu có tìm kiếm thì tìm theo tên môn học hoặc tên chương
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		baseQuery = baseQuery.Where("subjects.name ILIKE ? OR chapters.title ILIKE ?", searchPattern, searchPattern)
+	}
+
+	// Đếm tổng số bản ghi
+	var total int64
+	if err := db.Table("(?) as subquery", baseQuery).
+		Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Lỗi khi đếm tổng môn học",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Áp dụng sắp xếp
+	if sortOrder == "za" {
+		baseQuery = baseQuery.Order("subjects.name DESC")
+	} else {
+		baseQuery = baseQuery.Order("subjects.name ASC")
+	}
+
+	// Áp dụng phân trang và lấy danh sách môn học
+	var subjects []models.Subject
+	if err := baseQuery.
+		Preload("Chapters", func(db *gorm.DB) *gorm.DB {
+			return db.Order("CAST(substring(title from '[0-9]+') AS INTEGER) ASC, title ASC")
+		}).
+		Limit(limitNum).
+		Offset(offset).
+		Find(&subjects).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"message": "Lỗi khi lấy danh sách môn học",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// Kiểm tra user đăng nhập
+	userID, exists := c.Get("user_id")
+
+	// Nếu chưa đăng nhập thì trả về danh sách cơ bản
+	if !exists {
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "Lấy danh sách môn học thành công (không có tiến độ)",
+			"subjects": subjects,
+			"pagination": gin.H{
+				"page":  pageNum,
+				"limit": limitNum,
+				"total": total,
+				"pages": int(math.Ceil(float64(total) / float64(limitNum))),
+			},
+		})
+		return
+	}
+
+	// Nếu có user thì tính tiến độ
+	type SubjectProgress struct {
+		SubjectID       uuid.UUID `json:"subject_id"`
+		Name            string    `json:"name"`
+		TotalPodcasts   int64     `json:"total_podcasts"`
+		Completed       int64     `json:"completed"`
+		ProgressPercent float64   `json:"progress_percent"`
+	}
+
+	var progressList []SubjectProgress
+
+	db.Table("subjects").
+		Select(`
+			subjects.id AS subject_id,
+			subjects.name AS name,
+			COUNT(podcasts.id) AS total_podcasts,
+			COALESCE(SUM(CASE WHEN listening_histories.completed = TRUE THEN 1 ELSE 0 END), 0) AS completed
+		`).
+		Joins("LEFT JOIN chapters ON chapters.subject_id = subjects.id").
+		Joins("LEFT JOIN podcasts ON podcasts.chapter_id = chapters.id").
+		Joins("LEFT JOIN listening_histories ON listening_histories.podcast_id = podcasts.id AND listening_histories.user_id = ?", userID).
+		Where("subjects.status = ?", true).
+		Group("subjects.id").
+		Scan(&progressList)
+
+	for i := range progressList {
+		if progressList[i].TotalPodcasts > 0 {
+			progressList[i].ProgressPercent = (float64(progressList[i].Completed) / float64(progressList[i].TotalPodcasts)) * 100
+		}
+	}
+
+	// Trả kết quả
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Lấy danh sách môn học thành công",
+		"subjects": subjects,
+		"progress": progressList,
+		"pagination": gin.H{
+			"page":  pageNum,
+			"limit": limitNum,
+			"total": total,
+			"pages": int(math.Ceil(float64(total) / float64(limitNum))),
+		},
 	})
 }

@@ -2,8 +2,10 @@ package controllers
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -181,18 +183,117 @@ func CheckFavorite(c *gin.Context) {
 }
 
 func GetFavorites(c *gin.Context) {
-	userIDStr, _ := c.Get("user_id")
-	userID, _ := uuid.Parse(userIDStr.(string))
-
 	db := c.MustGet("db").(*gorm.DB)
 
-	var favorites []models.Favorite
-	if err := db.Preload("Podcast").Where("user_id = ?", userID).Find(&favorites).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch favorites"})
+	// Lấy user_id
+	userIDStr, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+	userID, err := uuid.Parse(userIDStr.(string))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
 		return
 	}
 
-	c.JSON(http.StatusOK, favorites)
+	// ======= PHÂN TRANG =======
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "5"))
+	if page < 1 {
+		page = 1
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 5
+	}
+	offset := (page - 1) * limit
+
+	// ======= LỌC THEO THỜI GIAN =======
+	timeFilter := c.DefaultQuery("time", "all")
+	startDate := time.Time{}
+	endDate := time.Now()
+
+	switch timeFilter {
+	case "today":
+		startDate = time.Now().Truncate(24 * time.Hour)
+	case "week":
+		startDate = time.Now().AddDate(0, 0, -7)
+	case "month":
+		startDate = time.Now().AddDate(0, -1, 0)
+	case "year":
+		startDate = time.Now().AddDate(-1, 0, 0)
+	case "custom":
+		from := c.Query("from")
+		to := c.Query("to")
+		if from != "" {
+			if parsed, err := time.Parse("2006-01-02", from); err == nil {
+				startDate = parsed
+			}
+		}
+		if to != "" {
+			if parsed, err := time.Parse("2006-01-02", to); err == nil {
+				endDate = parsed
+			}
+		}
+	}
+
+	// ======= SẮP XẾP =======
+	sortOrder := c.DefaultQuery("sort", "desc")
+	orderClause := "favorites.created_at DESC"
+	if sortOrder == "asc" {
+		orderClause = "favorites.created_at ASC"
+	}
+
+	// ======= TRUY VẤN CHÍNH =======
+	query := db.Model(&models.Favorite{}).
+		Preload("Podcast.Chapter.Subject").
+		Preload("Podcast.Categories").
+		Preload("Podcast.Tags").
+		Preload("Podcast.Topics").
+		Where("favorites.user_id = ?", userID)
+
+	// Lọc theo thời gian
+	if !startDate.IsZero() {
+		query = query.Where("favorites.created_at BETWEEN ? AND ?", startDate, endDate)
+	}
+
+	// ======= ĐẾM TỔNG =======
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đếm mục yêu thích"})
+		return
+	}
+
+	// ======= LẤY DỮ LIỆU =======
+	var favorites []models.Favorite
+	if err := query.
+		Order(orderClause).
+		Limit(limit).
+		Offset(offset).
+		Find(&favorites).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách yêu thích"})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+	// ======= TRẢ KẾT QUẢ =======
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Lấy danh sách podcast yêu thích thành công",
+		"data":    favorites,
+		"pagination": gin.H{
+			"page":        page,
+			"limit":       limit,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+		"filters": gin.H{
+			"time": timeFilter,
+			"sort": sortOrder,
+			"from": startDate,
+			"to":   endDate,
+		},
+	})
 }
 
 func SharePodcastSocialHandler(db *gorm.DB) gin.HandlerFunc {

@@ -813,7 +813,6 @@ func GetFeaturedPodcasts(c *gin.Context) {
 }
 
 // GetPodcastByID - Lấy chi tiết 1 podcast
-// GetPodcastByID - Lấy chi tiết 1 podcast
 func GetPodcastByID(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	id := c.Param("id")

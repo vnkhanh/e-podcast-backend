@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -133,55 +134,111 @@ func GetListeningHistory(c *gin.Context) {
 		return
 	}
 
-	// Pagination
-	limit := 20
-	if l := c.Query("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil && val > 0 && val <= 100 {
-			limit = val
+	// ==== PHÂN TRANG ====
+	page := 1
+	limit := 10
+	if val, err := strconv.Atoi(c.DefaultQuery("page", "1")); err == nil && val > 0 {
+		page = val
+	}
+	if val, err := strconv.Atoi(c.DefaultQuery("limit", "10")); err == nil && val > 0 && val <= 100 {
+		limit = val
+	}
+	offset := (page - 1) * limit
+
+	// ==== SẮP XẾP ====
+	sortOrder := c.DefaultQuery("sort", "desc") // desc (mới nhất) | asc (cũ nhất)
+	orderClause := "last_listened_at DESC"
+	if sortOrder == "asc" {
+		orderClause = "last_listened_at ASC"
+	}
+
+	// ==== LỌC THEO TRẠNG THÁI ====
+	completed := c.Query("completed") // true / false / ""
+
+	// ==== LỌC THEO THỜI GIAN ====
+	timeFilter := c.DefaultQuery("time", "all")
+	// "today", "week", "month", "year", "custom", "all"
+	startDate := time.Time{}
+	endDate := time.Now()
+
+	switch timeFilter {
+	case "today":
+		startDate = time.Now().Truncate(24 * time.Hour)
+	case "week":
+		startDate = time.Now().AddDate(0, 0, -7)
+	case "month":
+		startDate = time.Now().AddDate(0, -1, 0)
+	case "year":
+		startDate = time.Now().AddDate(-1, 0, 0)
+	case "custom":
+		from := c.Query("from")
+		to := c.Query("to")
+		if from != "" {
+			if parsed, err := time.Parse("2006-01-02", from); err == nil {
+				startDate = parsed
+			}
+		}
+		if to != "" {
+			if parsed, err := time.Parse("2006-01-02", to); err == nil {
+				endDate = parsed
+			}
 		}
 	}
 
-	offset := 0
-	if o := c.Query("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil && val >= 0 {
-			offset = val
-		}
-	}
-
-	// Xây dựng truy vấn chính
-	query := db.Where("user_id = ?", userID).
+	// ==== XÂY DỰNG TRUY VẤN ====
+	query := db.Model(&models.ListeningHistory{}).
+		Where("user_id = ?", userID).
+		Preload("Podcast.Chapter.Subject").
 		Preload("Podcast.Categories").
 		Preload("Podcast.Tags").
-		Preload("Podcast.Topics").
-		Order("last_listened_at DESC")
+		Preload("Podcast.Topics")
 
-	// Lọc theo trạng thái hoàn thành
-	if completed := c.Query("completed"); completed != "" {
-		switch completed {
-		case "true":
-			query = query.Where("completed = ?", true)
-		case "false":
-			query = query.Where("completed = ?", false)
-		}
+	// Lọc theo trạng thái
+	switch completed {
+	case "true":
+		query = query.Where("completed = ?", true)
+	case "false":
+		query = query.Where("completed = ?", false)
 	}
 
-	// Đếm tổng số bản ghi
-	var total int64
-	db.Model(&models.ListeningHistory{}).Where("user_id = ?", userID).Count(&total)
+	// Lọc theo thời gian
+	if !startDate.IsZero() {
+		query = query.Where("last_listened_at BETWEEN ? AND ?", startDate, endDate)
+	}
 
-	// Lấy dữ liệu có phân trang
-	var histories []models.ListeningHistory
-	if err := query.Limit(limit).Offset(offset).Find(&histories).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch listening history"})
+	// ==== ĐẾM TỔNG ====
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đếm lịch sử nghe"})
 		return
 	}
 
-	// Trả kết quả
+	// ==== LẤY DỮ LIỆU ====
+	var histories []models.ListeningHistory
+	if err := query.Order(orderClause).Limit(limit).Offset(offset).Find(&histories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy lịch sử nghe"})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(limit)))
+
+	// ==== TRẢ KẾT QUẢ ====
 	c.JSON(http.StatusOK, gin.H{
-		"data":   histories,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"message": "Lấy lịch sử nghe thành công",
+		"data":    histories,
+		"pagination": gin.H{
+			"page":        page,
+			"limit":       limit,
+			"total":       total,
+			"total_pages": totalPages,
+		},
+		"filters": gin.H{
+			"time":      timeFilter,
+			"completed": completed,
+			"sort":      sortOrder,
+			"from":      startDate,
+			"to":        endDate,
+		},
 	})
 }
 
