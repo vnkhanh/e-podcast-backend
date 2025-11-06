@@ -85,6 +85,8 @@ func SavePodcastHistory(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create listening history"})
 			return
 		}
+		updateAnalyticsAsync(db, userID, podcastID, history.Completed)
+
 	} else if result.Error == nil {
 		// Cập nhật
 		history.LastListenedAt = now
@@ -95,6 +97,7 @@ func SavePodcastHistory(c *gin.Context) {
 			history.Duration = req.Duration
 		}
 
+		wasCompleted := history.Completed
 		if req.Completed != nil && *req.Completed && !history.Completed {
 			history.Completed = true
 			history.CompletedAt = &now
@@ -103,6 +106,10 @@ func SavePodcastHistory(c *gin.Context) {
 		if err := db.Save(&history).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update listening history"})
 			return
+		}
+		// CẬP NHẬT ANALYTICS
+		if !wasCompleted && history.Completed {
+			updateAnalyticsAsync(db, userID, podcastID, true)
 		}
 	} else {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Database query failed"})
@@ -114,6 +121,54 @@ func SavePodcastHistory(c *gin.Context) {
 		"message": "Listening history saved successfully",
 		"data":    history,
 	})
+}
+
+// updateAnalyticsAsync cập nhật analytics khi có lượt nghe mới
+func updateAnalyticsAsync(db *gorm.DB, userID, podcastID uuid.UUID, completed bool) {
+	go func() {
+		today := time.Now().Truncate(24 * time.Hour)
+		completedInt := 0
+		if completed {
+			completedInt = 1
+		}
+
+		// 1. Update daily analytics
+		db.Exec(`
+			INSERT INTO listening_analytics (id, date, total_listens, unique_users, completed_listens, created_at, updated_at)
+			VALUES (gen_random_uuid(), $1, 1, 1, $2, NOW(), NOW())
+			ON CONFLICT (date) DO UPDATE SET
+				total_listens = listening_analytics.total_listens + 1,
+				completed_listens = listening_analytics.completed_listens + $2,
+				updated_at = NOW()
+		`, today, completedInt)
+
+		// 2. Update podcast analytics
+		db.Exec(`
+			INSERT INTO podcast_analytics (id, date, podcast_id, total_plays, unique_listeners, completed_plays, total_duration, created_at, updated_at)
+			VALUES (gen_random_uuid(), $1, $2, 1, 1, $3, 0, NOW(), NOW())
+			ON CONFLICT (date, podcast_id) DO UPDATE SET
+				total_plays = podcast_analytics.total_plays + 1,
+				completed_plays = podcast_analytics.completed_plays + $3,
+				updated_at = NOW()
+		`, today, podcastID, completedInt)
+
+		// 3. Update subject analytics (nếu có)
+		var podcast models.Podcast
+		if err := db.Preload("Chapter").First(&podcast, podcastID).Error; err == nil {
+			if podcast.ChapterID != uuid.Nil {
+				var chapter models.Chapter
+				if err := db.First(&chapter, podcast.ChapterID).Error; err == nil && chapter.SubjectID != uuid.Nil {
+					db.Exec(`
+						INSERT INTO subject_analytics (id, date, subject_id, total_plays, created_at, updated_at)
+						VALUES (gen_random_uuid(), $1, $2, 1, NOW(), NOW())
+						ON CONFLICT (date, subject_id) DO UPDATE SET
+							total_plays = subject_analytics.total_plays + 1,
+							updated_at = NOW()
+					`, today, chapter.SubjectID)
+				}
+			}
+		}
+	}()
 }
 
 // GetListeningHistory lấy danh sách lịch sử nghe của user
@@ -190,8 +245,7 @@ func GetListeningHistory(c *gin.Context) {
 		Where("user_id = ?", userID).
 		Preload("Podcast.Chapter.Subject").
 		Preload("Podcast.Categories").
-		Preload("Podcast.Tags").
-		Preload("Podcast.Topics")
+		Preload("Podcast.Tags")
 
 	// Lọc theo trạng thái
 	switch completed {

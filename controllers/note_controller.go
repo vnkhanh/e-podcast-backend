@@ -65,9 +65,33 @@ func CreateNote(c *gin.Context) {
 func GetNotesByPodcast(c *gin.Context) {
 	podcastID := c.Param("id")
 
+	// Lấy user_id từ context
+	userIDStr, ok := c.Get("user_id")
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Không tìm thấy user_id"})
+		return
+	}
+
+	var userID uuid.UUID
+	switch v := userIDStr.(type) {
+	case string:
+		parsed, err := uuid.Parse(v)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+			return
+		}
+		userID = parsed
+	case uuid.UUID:
+		userID = v
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Kiểu user_id không hợp lệ"})
+		return
+	}
+
+	// Truy vấn ghi chú theo podcast + user
 	var notes []models.Note
 	if err := config.DB.
-		Where("podcast_id = ?", podcastID).
+		Where("podcast_id = ? AND user_id = ?", podcastID, userID).
 		Preload("User").
 		Order("position ASC").
 		Find(&notes).Error; err != nil {

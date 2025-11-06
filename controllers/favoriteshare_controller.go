@@ -249,7 +249,6 @@ func GetFavorites(c *gin.Context) {
 		Preload("Podcast.Chapter.Subject").
 		Preload("Podcast.Categories").
 		Preload("Podcast.Tags").
-		Preload("Podcast.Topics").
 		Where("favorites.user_id = ?", userID)
 
 	// Lọc theo thời gian

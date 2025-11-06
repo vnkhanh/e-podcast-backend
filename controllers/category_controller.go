@@ -243,7 +243,7 @@ func GetCategoriesGet(c *gin.Context) {
 
 // /////USER
 // Lấy danh mục nổi bật
-func GetCategoriesUser(c *gin.Context) {
+func GetCategoriesUserPopular(c *gin.Context) {
 	type CategoryWithCount struct {
 		ID        string `json:"id"`
 		Name      string `json:"name"`
@@ -286,5 +286,60 @@ func GetCategoriesUser(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"categories": results,
+	})
+}
+
+// Lấy danh sách Category đang hoạt động (status = true) + tìm kiếm + phân trang + sắp xếp
+func GetCategoriesUser(c *gin.Context) {
+	var categories []models.Category
+	query := config.DB.Model(&models.Category{}).Where("status = ?", true)
+
+	// --- Tìm kiếm theo tên ---
+	if search := c.Query("search"); search != "" {
+		query = query.Where("LOWER(name) LIKE ?", "%"+strings.ToLower(search)+"%")
+	}
+
+	// --- Sắp xếp ---
+	sortOrder := strings.ToLower(c.DefaultQuery("sort", "asc")) // mặc định asc
+	if sortOrder == "desc" {
+		query = query.Order("name DESC")
+	} else {
+		query = query.Order("name ASC")
+	}
+
+	// --- Phân trang ---
+	limit := 10
+	page := 1
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+		if limit < 1 {
+			limit = 10
+		}
+	}
+	offset := (page - 1) * limit
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đếm danh mục"})
+		return
+	}
+
+	if err := query.Offset(offset).Limit(limit).Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách danh mục"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data":       categories,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
 	})
 }

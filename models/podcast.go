@@ -28,6 +28,5 @@ type Podcast struct {
 	PublishedAt *time.Time `json:"published_at"`
 
 	Categories []Category `gorm:"many2many:podcast_categories" json:"categories"`
-	Topics     []Topic    `gorm:"many2many:podcast_topics" json:"topics"`
 	Tags       []Tag      `gorm:"many2many:podcast_tags" json:"tags"`
 }

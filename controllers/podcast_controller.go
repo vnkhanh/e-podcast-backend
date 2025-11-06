@@ -194,24 +194,17 @@ func CreatePodcastWithUpload(c *gin.Context) {
 		return
 	}
 
-	// === 7 Gắn Category, Topic, Tag (tự tạo tag nếu cần) ===
+	// === 7 Gắn Category, Tag (tự tạo tag nếu cần) ===
 	var categories []models.Category
-	var topics []models.Topic
 	var tags []models.Tag
 
 	categoryIDs := c.PostFormArray("category_ids[]")
-	topicIDs := c.PostFormArray("topic_ids[]")
 	tagIDs := c.PostFormArray("tag_ids[]")
 	tagNames := c.PostFormArray("tag_names[]") // thêm hỗ trợ tạo tag mới theo tên
 
 	if len(categoryIDs) > 0 {
 		db.Where("id IN ?", categoryIDs).Find(&categories)
 		db.Model(&podcast).Association("Categories").Append(&categories)
-	}
-
-	if len(topicIDs) > 0 {
-		db.Where("id IN ?", topicIDs).Find(&topics)
-		db.Model(&podcast).Association("Topics").Append(&topics)
 	}
 
 	// Nếu có tag ID (chọn sẵn)
@@ -250,7 +243,6 @@ func CreatePodcastWithUpload(c *gin.Context) {
 
 	// === 8 Nạp lại dữ liệu quan hệ ===
 	db.Preload("Categories").
-		Preload("Topics").
 		Preload("Tags").
 		First(&podcast, "id = ?", podcast.ID)
 
@@ -275,7 +267,6 @@ func CreatePodcastWithUpload(c *gin.Context) {
 			"created_at":    podcast.CreatedAt,
 			"published_at":  podcast.PublishedAt,
 			"categories":    podcast.Categories,
-			"topics":        podcast.Topics,
 			"tags":          podcast.Tags,
 			"duration_text": 0,
 		},
@@ -366,7 +357,6 @@ func GetPodcastDetail(c *gin.Context) {
 		Preload("Chapter.Subject").
 		Preload("Document").
 		Preload("Categories").
-		Preload("Topics").
 		Preload("Tags").
 		First(&podcast, "id = ?", podcastID).Error; err != nil {
 
@@ -418,7 +408,6 @@ func GetPodcastDetail(c *gin.Context) {
 			"extracted_text": podcast.Document.ExtractedText,
 		},
 		"categories": podcast.Categories,
-		"topics":     podcast.Topics,
 		"tags":       podcast.Tags,
 	})
 }
@@ -488,11 +477,6 @@ func DeletePodcast(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation categories", "details": err.Error()})
 		return
 	}
-	if err := tx.Model(&podcast).Association("Topics").Clear(); err != nil {
-		tx.Rollback()
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation topics", "details": err.Error()})
-		return
-	}
 	if err := tx.Model(&podcast).Association("Tags").Clear(); err != nil {
 		tx.Rollback()
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa relation tags", "details": err.Error()})
@@ -541,7 +525,7 @@ func UpdatePodcast(c *gin.Context) {
 
 	podcastID := c.Param("id")
 	var podcast models.Podcast
-	if err := db.Preload("Categories").Preload("Topics").Preload("Tags").First(&podcast, "id = ?", podcastID).Error; err != nil {
+	if err := db.Preload("Categories").Preload("Tags").First(&podcast, "id = ?", podcastID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
 		return
 	}
@@ -632,29 +616,21 @@ func UpdatePodcast(c *gin.Context) {
 	podcast.UpdatedBy = &userUUID
 	podcast.UpdatedAt = time.Now()
 
-	// === 6 Cập nhật Category / Topic / Tag ===
+	// === 6 Cập nhật Category / Tag ===
 	categoryIDs := c.PostFormArray("category_ids[]")
-	topicIDs := c.PostFormArray("topic_ids[]")
 	tagIDs := c.PostFormArray("tag_ids[]")
 	tagNames := c.PostFormArray("tag_names[]")
 
 	var categories []models.Category
-	var topics []models.Topic
 	var tags []models.Tag
 
 	db.Model(&podcast).Association("Categories").Clear()
-	db.Model(&podcast).Association("Topics").Clear()
 	db.Model(&podcast).Association("Tags").Clear()
 
 	if len(categoryIDs) > 0 {
 		db.Where("id IN ?", categoryIDs).Find(&categories)
 		db.Model(&podcast).Association("Categories").Append(&categories)
 	}
-	if len(topicIDs) > 0 {
-		db.Where("id IN ?", topicIDs).Find(&topics)
-		db.Model(&podcast).Association("Topics").Append(&topics)
-	}
-
 	if len(tagIDs) > 0 {
 		db.Where("id IN ?", tagIDs).Find(&tags)
 	}
@@ -685,7 +661,7 @@ func UpdatePodcast(c *gin.Context) {
 		return
 	}
 
-	db.Preload("Categories").Preload("Topics").Preload("Tags").First(&podcast, "id = ?", podcast.ID)
+	db.Preload("Categories").Preload("Tags").First(&podcast, "id = ?", podcast.ID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Cập nhật podcast thành công",
@@ -824,7 +800,6 @@ func GetPodcastByID(c *gin.Context) {
 		Preload("Document").
 		Preload("Document.User").
 		Preload("Categories").
-		Preload("Topics").
 		Preload("Tags").
 		First(&podcast, "id = ?", id).Error; err != nil {
 

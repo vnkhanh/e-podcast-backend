@@ -50,7 +50,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 			account.GET("/favorite/:podcast_id", controllers.CheckFavorite)
 
 		}
-		user.GET("/categories", controllers.GetCategoriesUser)
+		user.GET("/categories/featured", controllers.GetCategoriesUserPopular)
+		user.GET("/categories", controllers.GetCategoriesUserPopular)
 		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)
 		user.GET("/podcasts/featured", controllers.GetFeaturedPodcasts)
 		user.GET("/podcasts/latest", controllers.GetLatestPodcasts)
@@ -110,18 +111,6 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		subjects.GET("/chapters/:id/check-deletable", controllers.CheckChapterDeletable)
 	}
 
-	// ==================== Quản lý chủ đề ====================
-	topics := admin.Group("/topics")
-	{
-		topics.POST("", controllers.CreateTopic)
-		topics.GET("", controllers.GetTopics)
-		topics.GET("/get", controllers.GetTopicsGet)
-		topics.GET("/:id", controllers.GetTopicDetail)
-		topics.PUT("/:id", controllers.UpdateTopic)
-		topics.DELETE("/:id", controllers.DeleteTopic)
-		topics.PATCH("/:id/toggle-status", controllers.ToggleTopicStatus)
-	}
-
 	// ==================== Quản lý danh mục ====================
 	categories := admin.Group("/categories")
 	{
@@ -168,24 +157,15 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		users.DELETE("/:id", controllers.AdminDeleteUser)
 		users.PATCH("/:id/toggle-status", controllers.ToggleUserStatus)
 	}
-	// ==================== Quản lý content page ====================
-	pages := admin.Group("/pages")
-	{
-		pages.GET("", controllers.GetAllPages)
-		pages.GET("/:slug", controllers.GetPageBySlug)
-		pages.POST("", middleware.RequireRoles("admin"), controllers.CreatePage)
-		pages.PUT("/:slug", middleware.RequireRoles("admin"), controllers.UpdatePage)
-		pages.DELETE("/:slug", middleware.RequireRoles("admin"), controllers.DeletePage)
-	}
-	api.GET("/page/:slug", middleware.DBMiddleware(db), controllers.GetPageBySlug)
 
 	// ==================== Thống kê ====================
 	stats := admin.Group("/stats")
 	{
 		stats.GET("/overview", controllers.GetDashboardOverview)
 		stats.GET("/monthly-listens", controllers.GetMonthlyListens)
+		stats.GET("/daily-listens", controllers.GetDailyListens)
 		stats.GET("/new-users", controllers.GetNewUsers)
-		stats.GET("/top-podcasts", controllers.GetTopPodcasts)
+		// stats.GET("/top-podcasts", controllers.GetTopPodcasts)
 		stats.GET("/subject-breakdown", controllers.GetSubjectBreakdown)
 	}
 

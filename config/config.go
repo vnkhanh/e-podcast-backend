@@ -46,10 +46,10 @@ func InitDB() {
 	}
 
 	// Connection Pooling config
-	sqlDB.SetMaxIdleConns(10)                  // số kết nối rảnh tối đa
-	sqlDB.SetMaxOpenConns(100)                 // số kết nối mở tối đa
-	sqlDB.SetConnMaxLifetime(time.Hour)        // tuổi thọ tối đa của 1 kết nối
-	sqlDB.SetConnMaxIdleTime(10 * time.Minute) // idle timeout
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(100)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 
 	// AutoMigrate các models
 	err = DB.AutoMigrate(
@@ -66,17 +66,41 @@ func InitDB() {
 		&models.QuizOption{},
 		&models.QuizAttempt{},
 		&models.QuizAttemptHistory{},
-		&models.Topic{},
 		&models.Category{},
 		&models.Subject{},
 		&models.Tag{},
 		&models.Chapter{},
 		&models.Notification{},
-		&models.ContentPage{},
 		&models.Comment{},
+		&models.ListeningAnalytics{},
+		&models.PodcastAnalytics{},
+		&models.SubjectAnalytics{},
 	)
 	if err != nil {
 		log.Fatal("autoMigrate lỗi: ", err)
 	}
 	log.Println("postgreSQL connected & migrated successfully!")
+}
+
+// ConnectDatabase trả về DB instance (dùng cho migration tool)
+func ConnectDatabase() (*gorm.DB, error) {
+	dbHost := os.Getenv("DB_HOST")
+	dbPort := os.Getenv("DB_PORT")
+	dbUser := os.Getenv("DB_USER")
+	dbPass := os.Getenv("DB_PASSWORD")
+	dbName := os.Getenv("DB_NAME")
+
+	dsn := fmt.Sprintf(
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Ho_Chi_Minh",
+		dbHost, dbUser, dbPass, dbName, dbPort,
+	)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Info),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
 }
