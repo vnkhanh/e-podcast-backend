@@ -788,6 +788,103 @@ func GetFeaturedPodcasts(c *gin.Context) {
 	})
 }
 
+// GetAllPublishedPodcasts - lấy danh sách podcast có status = "published"
+// Hỗ trợ tìm kiếm, sắp xếp, phân trang
+// GET /api/user/podcasts?search=&sort=&page=&limit=&category_id=&tag_id=
+func GetAllPublishedPodcasts(c *gin.Context) {
+	db := config.DB
+	var podcasts []models.Podcast
+
+	query := db.Model(&models.Podcast{}).
+		Where("status = ?", "published").
+		Preload("Chapter").
+		Preload("Chapter.Subject").
+		Preload("Document").
+		Preload("Categories").
+		Preload("Tags")
+
+	// --- Tìm kiếm theo tiêu đề ---
+	if search := c.Query("search"); search != "" {
+		query = query.Where("title ILIKE ?", "%"+search+"%")
+	}
+
+	// --- Lọc theo Category ---
+	if categoryID := c.Query("category_id"); categoryID != "" {
+		query = query.Joins("JOIN podcast_categories pc ON pc.podcast_id = podcasts.id").
+			Where("pc.category_id = ?", categoryID)
+	}
+
+	// --- Lọc theo Tag ---
+	if tagID := c.Query("tag_id"); tagID != "" {
+		query = query.Joins("JOIN podcast_tags pt ON pt.podcast_id = podcasts.id").
+			Where("pt.tag_id = ?", tagID)
+	}
+
+	// --- Lọc theo môn học (subject_id) ---
+	if subjectID := c.Query("subject_id"); subjectID != "" {
+		query = query.Joins("JOIN chapters ch ON ch.id = podcasts.chapter_id").
+			Where("ch.subject_id = ?", subjectID)
+	}
+
+	// --- Sắp xếp ---
+	sort := strings.ToLower(c.DefaultQuery("sort", "az"))
+	switch sort {
+	case "az":
+		query = query.Order("title ASC")
+	case "za":
+		query = query.Order("title DESC")
+	case "duration_asc":
+		query = query.Order("duration_sec ASC")
+	case "duration_desc":
+		query = query.Order("duration_sec DESC")
+	case "date_asc":
+		query = query.Order("published_at ASC NULLS LAST")
+	case "date_desc":
+		query = query.Order("published_at DESC NULLS LAST")
+	default:
+		query = query.Order("title ASC")
+	}
+
+	// --- Phân trang ---
+	limit := 10
+	page := 1
+	if p := c.Query("page"); p != "" {
+		fmt.Sscanf(p, "%d", &page)
+		if page < 1 {
+			page = 1
+		}
+	}
+	if l := c.Query("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+		if limit < 1 {
+			limit = 10
+		}
+	}
+	offset := (page - 1) * limit
+
+	// --- Đếm tổng số ---
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể đếm podcast"})
+		return
+	}
+
+	// --- Lấy dữ liệu ---
+	if err := query.Offset(offset).Limit(limit).Find(&podcasts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách podcast"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":    "Danh sách podcast đã xuất bản",
+		"podcasts":   podcasts,
+		"total":      total,
+		"page":       page,
+		"limit":      limit,
+		"totalPages": (total + int64(limit) - 1) / int64(limit),
+	})
+}
+
 // GetPodcastByID - Lấy chi tiết 1 podcast
 func GetPodcastByID(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)

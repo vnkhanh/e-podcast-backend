@@ -29,11 +29,12 @@ type SearchFullResponse struct {
 }
 
 type SearchResult struct {
-	ID    string `json:"id"`
-	Title string `json:"title,omitempty"` // podcast
-	Name  string `json:"name,omitempty"`  // subject
-	Type  string `json:"type"`            // podcast | subject
-	Slug  string `json:"slug,omitempty"`  // subject slug
+	ID         string `json:"id"`
+	Title      string `json:"title,omitempty"`       // podcast
+	Name       string `json:"name,omitempty"`        // subject
+	Type       string `json:"type"`                  // podcast | subject
+	Slug       string `json:"slug,omitempty"`        // subject slug
+	CoverImage string `json:"cover_image,omitempty"` // podcast cover image
 }
 
 // Search Full (search page)
@@ -147,9 +148,10 @@ func SearchAutocomplete(db *gorm.DB) gin.HandlerFunc {
 		var results []SearchResult
 		for _, p := range podcasts {
 			results = append(results, SearchResult{
-				ID:    p.ID.String(),
-				Title: p.Title,
-				Type:  "podcast",
+				ID:         p.ID.String(),
+				Title:      p.Title,
+				Type:       "podcast",
+				CoverImage: p.CoverImage,
 			})
 		}
 		for _, s := range subjects {

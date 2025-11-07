@@ -182,9 +182,18 @@ func GetSubjectDetail(c *gin.Context) {
 	}
 
 	var subject models.Subject
-	if err := config.DB.Preload("Chapters", func(db *gorm.DB) *gorm.DB {
-		return db.Order("created_at ASC")
-	}).First(&subject, "id = ?", subjectID).Error; err != nil {
+	if err := config.DB.
+		Preload("Chapters", func(db *gorm.DB) *gorm.DB {
+			return db.Order("created_at ASC")
+		}).
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, full_name, email")
+		}).
+		Preload("UpdatedByUser", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, full_name, email")
+		}).
+		First(&subject, "id = ?", subjectID).Error; err != nil {
+
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy môn học"})
 		return
 	}
@@ -210,6 +219,7 @@ type UpdateSubjectInput struct {
 // PUT /admin/subjects/:id
 func UpdateSubject(c *gin.Context) {
 	var input UpdateSubjectInput
+
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Dữ liệu không hợp lệ"})
 		return
@@ -229,6 +239,19 @@ func UpdateSubject(c *gin.Context) {
 	}
 
 	// === 1. Cập nhật thông tin cơ bản ===
+	// Lấy userID từ context (nếu có)
+	var userUUID *uuid.UUID
+	userIDStr := c.GetString("user_id")
+	if userIDStr != "" {
+		parsed, err := uuid.Parse(userIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
+			return
+		}
+		userUUID = &parsed
+	}
+	subject.UpdatedBy = userUUID
+
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học không được trống"})
@@ -323,8 +346,17 @@ func UpdateSubject(c *gin.Context) {
 	}
 
 	// === 4. Trả kết quả cập nhật ===
+	// === 4. Trả kết quả cập nhật ===
 	var updatedSubject models.Subject
-	if err := config.DB.Preload("Chapters").First(&updatedSubject, "id = ?", subjectID).Error; err != nil {
+	if err := config.DB.
+		Preload("Chapters").
+		Preload("User", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, full_name, email")
+		}).
+		Preload("UpdatedByUser", func(db *gorm.DB) *gorm.DB {
+			return db.Select("id, full_name, email")
+		}).
+		First(&updatedSubject, "id = ?", subjectID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tải lại dữ liệu sau khi cập nhật"})
 		return
 	}

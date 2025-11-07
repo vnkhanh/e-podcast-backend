@@ -16,4 +16,8 @@ type Category struct {
 	CreatedBy *uuid.UUID `gorm:"type:uuid;default:null" json:"created_by"` // có thể null
 	UpdatedBy *uuid.UUID `gorm:"type:uuid;default:null" json:"updated_by"` // có thể null
 	Podcasts  []Podcast  `gorm:"many2many:podcast_categories" json:"podcasts"`
+
+	// Quan hệ người tạo & người cập nhật
+	User          User `gorm:"foreignKey:CreatedBy" json:"user"`
+	UpdatedByUser User `gorm:"foreignKey:UpdatedBy" json:"updated_by_user"`
 }

@@ -51,7 +51,7 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 
 		}
 		user.GET("/categories/featured", controllers.GetCategoriesUserPopular)
-		user.GET("/categories", controllers.GetCategoriesUserPopular)
+		user.GET("/categories", controllers.GetCategoriesUser)
 		user.GET("/categories/:slug/podcasts", controllers.GetPodcastsByCategory)
 		user.GET("/podcasts/featured", controllers.GetFeaturedPodcasts)
 		user.GET("/podcasts/latest", controllers.GetLatestPodcasts)
@@ -60,6 +60,10 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.POST("/documents/:id/flashcards", middleware.AuthMiddleware(), controllers.GenerateFlashcardsFromDocument)
 		user.GET("/podcasts/:id/flashcards", middleware.AuthMiddleware(), controllers.GetFlashcardsByPodcast)
 		user.GET("/documents/:id", controllers.GetDocumentDetail)
+		user.GET("/podcasts", controllers.GetAllPublishedPodcasts)
+		user.GET("/tagsget", controllers.GetTags)
+		user.GET("/categoriesget", controllers.GetCategoriesGet)
+		user.GET("/subjectsget", controllers.GetSubjectsGet)
 
 		// Subject routes
 		user.GET("/subjects/popular", controllers.GetPopularSubjects)

@@ -17,5 +17,6 @@ type Subject struct {
 	UpdatedAt time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 	Chapters  []Chapter  `gorm:"foreignKey:SubjectID" json:"chapters"`
 
-	User User `gorm:"foreignKey:CreatedBy" json:"user"`
+	User          User `gorm:"foreignKey:CreatedBy" json:"user"`
+	UpdatedByUser User `gorm:"foreignKey:UpdatedBy" json:"updated_by_user"`
 }
