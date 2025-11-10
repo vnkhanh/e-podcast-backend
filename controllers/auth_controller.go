@@ -187,7 +187,6 @@ func GoogleLogin(c *gin.Context) {
 }
 
 // ========== QUÊN MẬT KHẨU ==========
-// ForgotPassword tạo JWT token gửi qua email
 func ForgotPassword(c *gin.Context) {
 	type Request struct {
 		Email string `json:"email" binding:"required,email"`
@@ -206,23 +205,39 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
+	// ===== XÓA TẤT CẢ TOKEN CŨ CỦA USER NÀY =====
+	db.Where("user_id = ?", user.ID).Delete(&models.PasswordReset{})
+
 	// ===== Tạo JWT reset token =====
 	secret := []byte(os.Getenv("JWT_SECRET"))
-	expiresAt := time.Now().Add(15 * time.Minute) // token hết hạn sau 15 phút
+	expiresAt := time.Now().Add(5 * time.Minute) // 5 phút
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id": user.ID.String(),
 		"exp":     expiresAt.Unix(),
 	})
-	resetToken, _ := token.SignedString(secret)
+	resetToken, err := token.SignedString(secret)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo token"})
+		return
+	}
+
+	// Lưu token mới vào DB
+	db.Create(&models.PasswordReset{
+		UserID:    user.ID,
+		Token:     resetToken,
+		ExpiresAt: expiresAt,
+	})
 
 	// ===== Tạo link và body email =====
 	link := fmt.Sprintf(`%s/auth/reset-password?token=%s`, os.Getenv("FE_BASE_URL"), resetToken)
 	body := fmt.Sprintf(`
-	<p>Click vào link dưới đây để đổi mật khẩu:</p>
+	<h3>Xin chào %s,</h3>
+	<p>Bạn đã yêu cầu đổi mật khẩu. Vui lòng nhấp vào liên kết dưới đây để đổi mật khẩu:</p>
 	<p><a href="%s">Đổi mật khẩu</a></p>
 	<p>Token này sẽ hết hạn vào <b>%s</b></p>
-	<p>Nếu bạn không yêu cầu đổi mật khẩu, hãy bỏ qua email này.</p>
-	`, link, expiresAt.Format("02/01/2006 15:04")) // định dạng: dd/mm/yyyy HH:mm
+	<hr>
+	<p><i>Nếu bạn không yêu cầu đổi mật khẩu, hãy bỏ qua email này.</i></p>
+	`, user.FullName, link, expiresAt.Format("02/01/2006 15:04"))
 
 	// ===== Gửi email =====
 	if err := utils.SendEmail(user.Email, "Quên mật khẩu", body); err != nil {
@@ -230,7 +245,6 @@ func ForgotPassword(c *gin.Context) {
 		return
 	}
 
-	// ===== Trả response =====
 	c.JSON(http.StatusOK, gin.H{"message": "Nếu email tồn tại, link đổi mật khẩu đã được gửi"})
 }
 
@@ -246,21 +260,76 @@ func ResetPassword(c *gin.Context) {
 		return
 	}
 
+	db := config.DB
+	var pr models.PasswordReset
+	if err := db.Where("token = ?", req.Token).First(&pr).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết không hợp lệ"})
+		return
+	}
+
+	if pr.Used {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết đã được sử dụng"})
+		return
+	}
+
+	if time.Now().After(pr.ExpiresAt) {
+		// XÓA TOKEN HẾT HẠN NGAY
+		db.Delete(&pr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết đã hết hạn"})
+		return
+	}
+
+	// Xác thực JWT token
 	secret := []byte(os.Getenv("JWT_SECRET"))
-	parsedToken, err := jwt.Parse(req.Token, func(token *jwt.Token) (interface{}, error) { return secret, nil })
+	parsedToken, err := jwt.Parse(req.Token, func(token *jwt.Token) (interface{}, error) {
+		return secret, nil
+	})
 	if err != nil || !parsedToken.Valid {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Token không hợp lệ hoặc hết hạn"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Token không hợp lệ hoặc đã hết hạn"})
 		return
 	}
 
 	claims := parsedToken.Claims.(jwt.MapClaims)
 	userID := claims["user_id"].(string)
 
+	// Cập nhật mật khẩu
 	hashed, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	db := config.DB
 	db.Model(&models.User{}).Where("id = ?", userID).Update("password", string(hashed))
 
+	// XÓA TOKEN SAU KHI DÙNG THÀNH CÔNG (thay vì update used = true)
+	db.Delete(&pr)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Đổi mật khẩu thành công"})
+}
+
+// VerifyResetToken kiểm tra token reset mật khẩu có còn hợp lệ không
+func VerifyResetToken(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Thiếu token"})
+		return
+	}
+
+	db := config.DB
+	var pr models.PasswordReset
+	if err := db.Where("token = ?", token).First(&pr).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết không hợp lệ"})
+		return
+	}
+
+	if pr.Used {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết đã được sử dụng"})
+		return
+	}
+
+	if time.Now().After(pr.ExpiresAt) {
+		// XÓA TOKEN HẾT HẠN
+		db.Delete(&pr)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Liên kết đã hết hạn"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Liên kết hợp lệ"})
 }
 
 // ==== ADMIN TẠO GIẢNG VIÊN ====

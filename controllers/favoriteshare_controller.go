@@ -298,18 +298,6 @@ func GetFavorites(c *gin.Context) {
 func SharePodcastSocialHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		podcastID := c.Param("podcast_id")
-		podcastUUID, err := uuid.Parse(podcastID)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Podcast ID không hợp lệ"})
-			return
-		}
-
-		share := models.PodcastShare{
-			ID:        uuid.New(),
-			PodcastID: podcastUUID,
-			SharedAt:  time.Now(),
-		}
-		db.Create(&share)
 
 		url := os.Getenv("FE_BASE_URL")
 		link := url + "/podcast/" + podcastID

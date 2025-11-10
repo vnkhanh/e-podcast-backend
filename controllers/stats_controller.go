@@ -169,10 +169,20 @@ func GetNewUsers(c *gin.Context) {
 
 	var res []Point
 	db.Raw(`
-		SELECT TO_CHAR(created_at,'YYYY-MM-DD') AS date, COUNT(*) AS count
-		FROM users
-		WHERE created_at >= ?
-		GROUP BY date ORDER BY date
+		WITH date_series AS (
+			SELECT generate_series(
+				?::date,
+				CURRENT_DATE,
+				'1 day'::interval
+			)::date AS date
+		)
+		SELECT 
+			TO_CHAR(ds.date, 'YYYY-MM-DD') AS date,
+			COALESCE(COUNT(u.id), 0) AS count
+		FROM date_series ds
+		LEFT JOIN users u ON u.created_at::date = ds.date
+		GROUP BY ds.date
+		ORDER BY ds.date
 	`, from).Scan(&res)
 
 	c.JSON(http.StatusOK, res)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/vnkhanh/e-podcast-backend/config"
 	"github.com/vnkhanh/e-podcast-backend/models"
 	"github.com/vnkhanh/e-podcast-backend/services"
 	"gorm.io/gorm"
@@ -621,4 +622,42 @@ func GetQuizAttemptDetail(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, gin.H{"attempt": attempt})
+}
+
+// Xóa 1 quiz set cụ thể của user
+func DeleteQuizSetByCurrentUser(c *gin.Context) {
+	db := config.DB
+	userID := c.MustGet("user_id").(string)
+	quizSetID := c.Param("quizset_id")
+
+	var quizSet models.QuizSet
+	// Chỉ tìm quizset do user này tạo
+	if err := db.Where("id = ? AND created_by = ?", quizSetID, userID).First(&quizSet).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Quiz set not found or not owned by this user"})
+		return
+	}
+
+	if err := db.Delete(&quizSet).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Đã xóa thành công",
+	})
+}
+
+// Xóa toàn bộ quiz set của user
+func DeleteAllQuizSetsByCurrentUser(c *gin.Context) {
+	db := config.DB
+	userID := c.MustGet("user_id").(string)
+
+	if err := db.Where("created_by = ?", userID).Delete(&models.QuizSet{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Tất cả câu hỏi đã được xóa!",
+	})
 }

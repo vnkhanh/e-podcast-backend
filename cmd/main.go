@@ -10,6 +10,7 @@ import (
 
 	"github.com/vnkhanh/e-podcast-backend/config"
 	"github.com/vnkhanh/e-podcast-backend/routes"
+	"github.com/vnkhanh/e-podcast-backend/utils"
 )
 
 func main() {
@@ -21,8 +22,10 @@ func main() {
 	config.InitDB()
 
 	r := gin.Default()
+	// Khởi động Cleanup Job
+	utils.StartCleanupJob()
 
-	//Bật CORS
+	// Bật CORS
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

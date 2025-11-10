@@ -282,8 +282,10 @@ func FormatSecondsToHHMMSS(seconds int) string {
 
 func GetPodcasts(c *gin.Context) {
 	var podcasts []models.Podcast
-	query := config.DB.Model(&models.Podcast{})
-	// Lấy userID và role từ context
+	db := config.DB
+	query := db.Model(&models.Podcast{})
+
+	// --- Lấy userID và role từ context ---
 	userIDStr := c.GetString("user_id")
 	role := c.GetString("role")
 
@@ -292,20 +294,46 @@ func GetPodcasts(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "user_id không hợp lệ"})
 		return
 	}
-	// Phân quyền
-	if role == string(models.RoleLecturer) { // giảng viên
+
+	// --- Phân quyền ---
+	if role == string(models.RoleLecturer) { // giảng viên chỉ thấy podcast của mình
 		query = query.Where("created_by = ?", userUUID)
 	} else if role == string(models.RoleAdmin) {
-		// admin: không thêm filter, lấy tất cả
+		// admin: xem tất cả
 	}
 
 	// --- Tìm kiếm theo tên ---
 	if search := c.Query("search"); search != "" {
-		query = query.Where("title ILIKE ?", "%"+search+"%") // Postgres
+		query = query.Where("title ILIKE ?", "%"+search+"%") // PostgreSQL
 	}
+
 	// --- Lọc theo trạng thái ---
 	if status := c.Query("status"); status != "" {
 		query = query.Where("LOWER(status) = LOWER(?)", status)
+	}
+
+	// --- Lọc theo ngày tạo ---
+	startDateStr := c.Query("start_date") // yyyy-mm-dd
+	endDateStr := c.Query("end_date")
+
+	const layout = "2006-01-02"
+	if startDateStr != "" && endDateStr != "" {
+		startDate, err1 := time.Parse(layout, startDateStr)
+		endDate, err2 := time.Parse(layout, endDateStr)
+		if err1 == nil && err2 == nil {
+			// endDate +1 để bao gồm cả ngày kết thúc (23:59:59)
+			endDate = endDate.Add(24 * time.Hour)
+			query = query.Where("created_at BETWEEN ? AND ?", startDate, endDate)
+		}
+	} else if startDateStr != "" {
+		if startDate, err := time.Parse(layout, startDateStr); err == nil {
+			query = query.Where("created_at >= ?", startDate)
+		}
+	} else if endDateStr != "" {
+		if endDate, err := time.Parse(layout, endDateStr); err == nil {
+			endDate = endDate.Add(24 * time.Hour)
+			query = query.Where("created_at <= ?", endDate)
+		}
 	}
 
 	// --- Phân trang ---
@@ -321,15 +349,23 @@ func GetPodcasts(c *gin.Context) {
 			limit = 10
 		}
 	}
-
 	offset := (page - 1) * limit
+
+	// --- Đếm tổng ---
 	var total int64
 	query.Count(&total)
+
 	// --- Lấy dữ liệu ---
-	if err := query.Offset(offset).Limit(limit).Order("created_at DESC").Find(&podcasts).Error; err != nil {
+	if err := query.
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&podcasts).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách podcast"})
 		return
 	}
+
+	// --- Trả kết quả ---
 	c.JSON(http.StatusOK, gin.H{
 		"data":       podcasts,
 		"total":      total,
@@ -370,7 +406,23 @@ func GetPodcastDetail(c *gin.Context) {
 
 	// 3. Chuyển duration thành HH:MM:SS
 	durationText := FormatSecondsToHHMMSS(podcast.DurationSec)
+	// Lấy tên người tạo
+	var createdByName string
+	db.Model(&models.User{}).
+		Select("full_name").
+		Where("id = ?", podcast.CreatedBy).
+		Scan(&createdByName)
 
+	// Lấy tên người cập nhật (nếu có)
+	var updatedByName *string
+	if podcast.UpdatedBy != nil {
+		var name string
+		db.Model(&models.User{}).
+			Select("full_name").
+			Where("id = ?", podcast.UpdatedBy).
+			Scan(&name)
+		updatedByName = &name
+	}
 	// 4. Trả JSON chi tiết
 	c.JSON(http.StatusOK, gin.H{
 		"id":            podcast.ID,
@@ -382,13 +434,13 @@ func GetPodcastDetail(c *gin.Context) {
 		"duration_text": durationText,
 		"cover_image":   podcast.CoverImage,
 		"summary":       podcast.Summary,
+		"created_by":    createdByName,
+		"updated_by":    updatedByName,
 		"view_count":    podcast.ViewCount,
 		"like_count":    podcast.LikeCount,
 		"created_at":    podcast.CreatedAt,
 		"published_at":  podcast.PublishedAt,
-		"created_by":    podcast.CreatedBy,
 		"updated_at":    podcast.UpdatedAt,
-		"updated_by":    podcast.UpdatedBy,
 		"chapter": gin.H{
 			"id":    podcast.Chapter.ID,
 			"title": podcast.Chapter.Title,

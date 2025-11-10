@@ -47,3 +47,13 @@ type SubjectAnalytics struct {
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 }
+
+type ListeningEvent struct {
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey"`
+	UserID     uuid.UUID `gorm:"type:uuid;not null;index"`
+	PodcastID  uuid.UUID `gorm:"type:uuid;not null;index"`
+	ListenedAt time.Time `gorm:"not null;index"`
+	Duration   int       // Thời gian nghe trong session này
+	Position   int       // Vị trí bắt đầu
+	Completed  bool      // Hoàn thành trong session này không
+}

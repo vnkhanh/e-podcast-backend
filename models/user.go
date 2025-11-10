@@ -31,3 +31,12 @@ type User struct {
 	Flashcards         []Flashcard        `json:"flashcards"`
 	ListeningHistories []ListeningHistory `json:"listening_histories,omitempty"`
 }
+
+type PasswordReset struct {
+	ID        uuid.UUID `gorm:"type:uuid;default:gen_random_uuid();primaryKey"`
+	UserID    uuid.UUID `gorm:"type:uuid;not null"`
+	Token     string    `gorm:"type:text;not null"`
+	Used      bool      `gorm:"default:false"`
+	ExpiresAt time.Time `gorm:"not null"`
+	CreatedAt time.Time `gorm:"autoCreateTime"`
+}

@@ -56,7 +56,6 @@ func InitDB() {
 		&models.User{},
 		&models.Podcast{},
 		&models.ListeningHistory{},
-		&models.PodcastShare{},
 		&models.Flashcard{},
 		&models.Note{},
 		&models.Document{},
@@ -75,6 +74,8 @@ func InitDB() {
 		&models.ListeningAnalytics{},
 		&models.PodcastAnalytics{},
 		&models.SubjectAnalytics{},
+		&models.PasswordReset{},
+		&models.ListeningEvent{},
 	)
 	if err != nil {
 		log.Fatal("autoMigrate lỗi: ", err)

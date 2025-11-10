@@ -24,9 +24,10 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		auth.POST("/register", controllers.Register)
 		auth.POST("/login", controllers.Login)
 		auth.POST("/logingoogle", controllers.GoogleLogin)
-		auth.PUT("/change-password", controllers.ChangePassword)
+		auth.PUT("/change-password", middleware.AuthMiddleware(), controllers.ChangePassword)
 		auth.POST("/forgot-password", controllers.ForgotPassword)
 		auth.POST("/reset-password", controllers.ResetPassword)
+		auth.GET("/verify-reset-token", controllers.VerifyResetToken)
 		// auth.POST("/loginfacebook", controllers.FacebookLogin)
 	}
 
@@ -78,6 +79,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/quiz-attempts", middleware.AuthMiddleware(), controllers.GetUserQuizAttempts)                  // lấy
 		user.GET("/quiz-attempts/:attemptID", middleware.AuthMiddleware(), controllers.GetQuizAttemptDetail)      // gửi câu hỏi
 		user.GET("/quiz-sets/:id/attempts", middleware.AuthMiddleware(), controllers.GetQuizAttemptsBySet)        // lấy lịch sử làm quiz
+		user.DELETE("/quiz-sets/:quizset_id", middleware.AuthMiddleware(), controllers.DeleteQuizSetByCurrentUser)
+		user.DELETE("/quiz-sets", middleware.AuthMiddleware(), controllers.DeleteAllQuizSetsByCurrentUser)
 
 		// Notes
 		user.POST("/notes", middleware.AuthMiddleware(), controllers.CreateNote)
