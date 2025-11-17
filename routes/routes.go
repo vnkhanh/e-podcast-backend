@@ -89,6 +89,14 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 
 		// Listening
 		user.POST("/podcasts/:id/listen", middleware.OptionalAuthMiddleware(), controllers.IncreasePodcastListenCount)
+
+		// Bài tập
+		user.GET("/podcasts/:id/assignments", middleware.AuthMiddleware(), controllers.GetAssignmentsByPodcast)
+		user.GET("/assignments/:id", middleware.AuthMiddleware(), controllers.GetAssignmentDetail)
+		user.POST("/assignments/:id/submit", middleware.AuthMiddleware(), controllers.SubmitAssignment)
+		user.GET("/assignments/:id/submissions", middleware.AuthMiddleware(), controllers.GetUserSubmissions)
+		user.GET("/submissions/:submission_id", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
+		user.GET("/assignments/:id/verify-password", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
 	}
 	admin := api.Group("/admin")
 	{
@@ -150,7 +158,21 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		podcasts.DELETE("/:id", controllers.DeletePodcast)
 		podcasts.PUT("/:id", controllers.UpdatePodcast)
 	}
+	// ==================== Quản lý bài tập ====================
 
+	assignments := admin.Group("/assignments")
+	{
+		assignments.POST("/from-gemini", controllers.CreateAssignmentFromGemini)
+		assignments.POST("/from-file", controllers.CreateAssignmentFromFile)
+		assignments.GET("", controllers.GetTeacherAssignments)
+		assignments.PUT("/:id", controllers.UpdateAssignment)
+		assignments.DELETE("/:id", controllers.DeleteAssignment)
+		assignments.PATCH("/:id/toggle-publish", controllers.TogglePublishAssignment)
+		assignments.GET("/subjects/teacher", controllers.GetTeacherSubjects)
+		assignments.GET("/podcasts/by-chapter/:chapterID", controllers.GetPodcastsByChapter)
+		assignments.GET("/:id/submissions", controllers.GetAssignmentSubmissions)
+
+	}
 	// ==================== Quản lý tag ====================
 	tags := admin.Group("/tags")
 	{

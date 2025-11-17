@@ -75,6 +75,11 @@ func InitDB() {
 		&models.PodcastAnalytics{},
 		&models.SubjectAnalytics{},
 		&models.PasswordReset{},
+		&models.Assignment{},
+		&models.AssignmentQuestion{},
+		&models.AssignmentOption{},
+		&models.AssignmentSubmission{},
+		&models.AssignmentAnswer{},
 	)
 	if err != nil {
 		log.Fatal("autoMigrate lỗi: ", err)

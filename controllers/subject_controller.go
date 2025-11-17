@@ -18,14 +18,15 @@ import (
 
 // Input cho Create / Update
 type CreateSubjectInput struct {
-	Name string `json:"name" binding:"required"`
+	Name       string `json:"name" binding:"required"`
+	CourseCode string `json:"course_code" binding:"required"`
 }
 
 // POST /admin/subjects
 func CreateSubject(c *gin.Context) {
 	var input CreateSubjectInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học bắt buộc"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Vui lòng nhập đầy đủ thông tin!"})
 		return
 	}
 
@@ -41,20 +42,30 @@ func CreateSubject(c *gin.Context) {
 		userUUID = &parsed
 	}
 
-	// === Kiểm tra trùng tên ===
+	// Kiểm tra trùng tên
 	var count int64
 	config.DB.Model(&models.Subject{}).Where("LOWER(name) = LOWER(?)", input.Name).Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học đã tồn tại"})
 		return
 	}
+	// Kiểm tra trùng course_code
+	var codeCount int64
+	config.DB.Model(&models.Subject{}).
+		Where("LOWER(course_code) = LOWER(?)", input.CourseCode).
+		Count(&codeCount)
+	if codeCount > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Mã môn học đã tồn tại"})
+		return
+	}
 
 	// Tạo subject
 	subject := models.Subject{
-		Name:      input.Name,
-		CreatedBy: userUUID, // có thể null
-		Status:    true,     // mặc định active
-		Slug:      slug.Make(input.Name),
+		Name:       input.Name,
+		CreatedBy:  userUUID, // có thể null
+		Status:     true,     // mặc định active
+		Slug:       slug.Make(input.Name),
+		CourseCode: input.CourseCode,
 	}
 
 	if err := config.DB.Create(&subject).Error; err != nil {
@@ -211,9 +222,10 @@ type ChapterInput struct {
 }
 
 type UpdateSubjectInput struct {
-	Name     string         `json:"name"`
-	Status   *bool          `json:"status"`
-	Chapters []ChapterInput `json:"chapters"`
+	Name       string         `json:"name"`
+	CourseCode string         `json:"course_code"`
+	Status     *bool          `json:"status"`
+	Chapters   []ChapterInput `json:"chapters"`
 }
 
 // PUT /admin/subjects/:id
@@ -257,6 +269,11 @@ func UpdateSubject(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học không được trống"})
 		return
 	}
+	CourseCode := strings.TrimSpace(input.CourseCode)
+	if CourseCode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Mã môn học không được trống"})
+		return
+	}
 
 	slugValue := slug.Make(name)
 	var count int64
@@ -265,6 +282,14 @@ func UpdateSubject(c *gin.Context) {
 		Count(&count)
 	if count > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tên môn học đã tồn tại"})
+		return
+	}
+	var codeCount int64
+	config.DB.Model(&models.Subject{}).
+		Where("LOWER(course_code) = LOWER(?) AND id <> ?", CourseCode, subjectID).
+		Count(&codeCount)
+	if codeCount > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Mã môn học đã tồn tại"})
 		return
 	}
 
@@ -345,7 +370,6 @@ func UpdateSubject(c *gin.Context) {
 		}
 	}
 
-	// === 4. Trả kết quả cập nhật ===
 	// === 4. Trả kết quả cập nhật ===
 	var updatedSubject models.Subject
 	if err := config.DB.
