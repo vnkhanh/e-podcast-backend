@@ -121,8 +121,8 @@ Yêu cầu:
 - Chỉ 1 đáp án đúng
 - Câu hỏi đánh giá sự hiểu biết sâu sắc, không chỉ thuộc lòng
 - Thêm trường "explanation" giải thích tại sao đáp án đúng
-- Thêm trường "points": điểm của câu (1.0 cho câu dễ, 2.0 cho câu khó)
-
+- Thêm trường "points": điểm của câu (2.0 - 1.0 cho câu dễ, 0.5 cho câu khó)
+- Có thể ghi theo giáo trình hoặc theo podcast chứ không được ghi theo đoạn văn
 Trả về JSON:
 [
   {
@@ -324,23 +324,52 @@ func GetTeacherAssignments(c *gin.Context) {
 	userIDStr := c.GetString("user_id")
 	role := c.GetString("role")
 
+	// --- QUERY SEARCH PARAMETERS ---
+	search := c.Query("search") // nhận search chung
 	userUUID, _ := uuid.Parse(userIDStr)
+
 	query := db.Model(&models.Assignment{}).
 		Preload("Podcast").
+		Preload("Podcast.Chapter").
+		Preload("Podcast.Chapter.Subject").
 		Preload("Questions.Options")
 
-	// Giảng viên chỉ thấy assignment của mình
+	// Quyền giảng viên
 	if role == string(models.RoleLecturer) {
-		query = query.Where("created_by = ?", userUUID)
+		query = query.Where("assignments.created_by = ?", userUUID)
 	}
 
-	// Admin thấy tất cả
+	// Admin preload creator
 	if role == string(models.RoleAdmin) {
 		query = query.Preload("Creator")
 	}
 
+	// -------------------------
+	// SEARCH
+	// Tìm theo:
+	// - tên bài tập
+	// - tên chương
+	// - tên môn học
+	// - tên podcast
+	// -------------------------
+	if search != "" {
+		like := "%" + search + "%"
+
+		query = query.
+			Joins("LEFT JOIN podcasts ON podcasts.id = assignments.podcast_id").
+			Joins("LEFT JOIN chapters ON chapters.id = podcasts.chapter_id").
+			Joins("LEFT JOIN subjects ON subjects.id = chapters.subject_id").
+			Where(`
+				assignments.title ILIKE ?
+				OR podcasts.title ILIKE ?
+				OR chapters.title ILIKE ?
+				OR subjects.name ILIKE ?
+			`, like, like, like, like)
+	}
+
 	var assignments []models.Assignment
-	if err := query.Order("created_at DESC").Find(&assignments).Error; err != nil {
+
+	if err := query.Order("assignments.created_at DESC").Find(&assignments).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách bài tập"})
 		return
 	}
@@ -348,6 +377,50 @@ func GetTeacherAssignments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"assignments": assignments,
 		"total":       len(assignments),
+	})
+}
+
+// Lấy chi tiết 1 assignment theo ID
+func GetAssignmentDetailTeacher(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	role := c.GetString("role")
+	userIDStr := c.GetString("user_id")
+
+	assignmentIDStr := c.Param("id")
+	assignmentUUID, err := uuid.Parse(assignmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	query := db.Model(&models.Assignment{}).
+		Preload("Podcast").
+		Preload("Podcast.Chapter").
+		Preload("Podcast.Chapter.Subject")
+
+	// Admin preload creator
+	if role == string(models.RoleAdmin) {
+		query = query.Preload("Creator")
+	}
+
+	// Giảng viên chỉ được xem bài tập của mình
+	if role == string(models.RoleLecturer) {
+		userUUID, _ := uuid.Parse(userIDStr)
+		query = query.Where("assignments.created_by = ?", userUUID)
+	}
+
+	var assignment models.Assignment
+	if err := query.Where("assignments.id = ?", assignmentUUID).First(&assignment).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài tập"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi server"})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"assignment": assignment,
 	})
 }
 
@@ -586,24 +659,107 @@ func GetAssignmentSubmissions(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	assignmentID := c.Param("id")
 
+	// Parse UUID
 	assUUID, err := uuid.Parse(assignmentID)
 	if err != nil {
 		c.JSON(400, gin.H{"error": "ID bài tập không hợp lệ"})
 		return
 	}
 
+	// Query params
+	search := c.Query("search")
+	status := c.Query("status") // passed | failed
+	pageStr := c.Query("page")
+	limitStr := c.Query("limit")
+
+	// Pagination default
+	page := 1
+	limit := 10
+	if p, err := strconv.Atoi(pageStr); err == nil && p > 0 {
+		page = p
+	}
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+	offset := (page - 1) * limit
+
+	// Base query (không preload ở đây)
+	query := db.Model(&models.AssignmentSubmission{}).
+		Where("assignment_id = ?", assUUID)
+
+	// Tìm kiếm theo tên
+	if search != "" {
+		like := "%" + search + "%"
+		query = query.Joins("JOIN users ON users.id = assignment_submissions.user_id").
+			Where("users.full_name ILIKE ?", like)
+	}
+
+	// Lọc pass/fail
+	if status == "passed" {
+		query = query.Where("is_passed = ?", true)
+	}
+	if status == "failed" {
+		query = query.Where("is_passed = ?", false)
+	}
+
+	// Đếm tổng sau khi filter
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Không thể đếm số lượng bài nộp"})
+		return
+	}
+
+	// Lấy dữ liệu theo phân trang
 	var submissions []models.AssignmentSubmission
-	if err := db.Where("assignment_id = ?", assUUID).
+	if err := query.
 		Preload("User").
+		Preload("Answers").
 		Order("submitted_at DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&submissions).Error; err != nil {
+
 		c.JSON(500, gin.H{"error": "Không thể lấy danh sách bài nộp"})
 		return
 	}
 
 	c.JSON(200, gin.H{
 		"submissions": submissions,
-		"total":       len(submissions),
+		"total":       total,
+		"page":        page,
+		"limit":       limit,
+	})
+}
+
+// Lấy chi tiết một bài nộp của sinh viên
+// GET /admin/submissions/:id
+func GetAssignmentSubmissionDetailTeacher(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	submissionID := c.Param("id")
+
+	// Parse UUID
+	subUUID, err := uuid.Parse(submissionID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "ID bài nộp không hợp lệ"})
+		return
+	}
+
+	// Lấy chi tiết bài nộp
+	var submission models.AssignmentSubmission
+	if err := db.Preload("User").
+		Preload("Assignment").
+		Preload("Answers").
+		Preload("Answers.Question").
+		Preload("Answers.SelectedOption").
+		Preload("Answers.Question.Options").
+		First(&submission, "id = ?", subUUID).Error; err != nil {
+		c.JSON(404, gin.H{"error": "Bài nộp không tìm thấy"})
+		return
+	}
+
+	// Trả dữ liệu
+	c.JSON(200, gin.H{
+		"submission": submission,
 	})
 }
 
@@ -621,6 +777,7 @@ func GetAssignmentsByPodcast(c *gin.Context) {
 	var assignments []models.Assignment
 	if err := db.Where("podcast_id = ? AND is_published = ?", podcastUUID, true).
 		Preload("Questions").
+		Preload("Creator").
 		Order("created_at DESC").
 		Find(&assignments).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách bài tập"})
@@ -662,7 +819,7 @@ func GetAssignmentsByPodcast(c *gin.Context) {
 }
 
 // Lấy chi tiết assignment (không chặn nếu hết lượt)
-func GetAssignmentDetail(c *gin.Context) {
+func GetAssignmentDetailStudent(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	assignmentID := c.Param("id")
 	userIDStr := c.GetString("user_id")

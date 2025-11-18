@@ -92,11 +92,11 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 
 		// Bài tập
 		user.GET("/podcasts/:id/assignments", middleware.AuthMiddleware(), controllers.GetAssignmentsByPodcast)
-		user.GET("/assignments/:id", middleware.AuthMiddleware(), controllers.GetAssignmentDetail)
+		user.GET("/assignments/:id", middleware.AuthMiddleware(), controllers.GetAssignmentDetailStudent)
 		user.POST("/assignments/:id/submit", middleware.AuthMiddleware(), controllers.SubmitAssignment)
 		user.GET("/assignments/:id/submissions", middleware.AuthMiddleware(), controllers.GetUserSubmissions)
 		user.GET("/submissions/:submission_id", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
-		user.GET("/assignments/:id/verify-password", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
+		user.POST("/assignments/:id/verify-password", middleware.AuthMiddleware(), controllers.VerifyAssignmentPassword)
 	}
 	admin := api.Group("/admin")
 	{
@@ -171,6 +171,8 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		assignments.GET("/subjects/teacher", controllers.GetTeacherSubjects)
 		assignments.GET("/podcasts/by-chapter/:chapterID", controllers.GetPodcastsByChapter)
 		assignments.GET("/:id/submissions", controllers.GetAssignmentSubmissions)
+		assignments.GET("/:id", controllers.GetAssignmentDetailTeacher)
+		assignments.GET("/submissions/:id", controllers.GetAssignmentSubmissionDetailTeacher)
 
 	}
 	// ==================== Quản lý tag ====================
