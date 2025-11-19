@@ -171,8 +171,14 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		assignments.GET("/subjects/teacher", controllers.GetTeacherSubjects)
 		assignments.GET("/podcasts/by-chapter/:chapterID", controllers.GetPodcastsByChapter)
 		assignments.GET("/:id/submissions", controllers.GetAssignmentSubmissions)
-		assignments.GET("/:id", controllers.GetAssignmentDetailTeacher)
 		assignments.GET("/submissions/:id", controllers.GetAssignmentSubmissionDetailTeacher)
+
+		// Câu hỏi
+		assignments.GET("/:id/questions", controllers.GetAssignmentQuestionsForTeacher)
+		assignments.POST("/:id/questions", controllers.CreateAssignmentQuestion)
+		assignments.PUT("/questions/:questionId", controllers.UpdateAssignmentQuestion)
+		assignments.DELETE("/questions/:questionId", controllers.DeleteAssignmentQuestion)
+		assignments.GET("/:id", controllers.GetAssignmentDetailTeacher)
 
 	}
 	// ==================== Quản lý tag ====================

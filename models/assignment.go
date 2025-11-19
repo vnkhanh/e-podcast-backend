@@ -21,6 +21,7 @@ type Assignment struct {
 
 	HasPassword bool   `gorm:"default:false" json:"has_password"`
 	Password    string `gorm:"type:varchar(255)" json:"password,omitempty"`
+	AllowReview bool   `gorm:"default:true" json:"allow_review"` // Cho phép sinh viên xem đáp án
 
 	CreatedBy uuid.UUID            `gorm:"type:uuid;not null" json:"created_by"`
 	Creator   User                 `gorm:"foreignKey:CreatedBy;references:ID;constraint:OnDelete:CASCADE;" json:"creator"`
@@ -35,9 +36,10 @@ type AssignmentQuestion struct {
 	AssignmentID uuid.UUID          `gorm:"type:uuid;not null" json:"assignment_id"`
 	Assignment   Assignment         `gorm:"foreignKey:AssignmentID;references:ID;constraint:OnDelete:CASCADE;" json:"-"`
 	Question     string             `gorm:"type:text;not null" json:"question"`
-	Explanation  string             `gorm:"type:text" json:"explanation"`                // Giải thích đáp án
-	Points       float64            `gorm:"type:numeric(5,2);default:1.0" json:"points"` // Điểm của câu hỏi
-	SortOrder    int                `gorm:"default:0" json:"sort_order"`                 // Thứ tự hiển thị
+	Difficulty   string             `gorm:"type:varchar(50);default:'medium'" json:"difficulty"` // "easy", "medium", "hard"
+	Explanation  string             `gorm:"type:text" json:"explanation"`                        // Giải thích đáp án
+	Points       float64            `gorm:"type:numeric(5,2);default:1.0" json:"points"`         // Điểm của câu hỏi
+	SortOrder    int                `gorm:"default:0" json:"sort_order"`                         // Thứ tự hiển thị
 	CreatedAt    time.Time          `gorm:"autoCreateTime" json:"created_at"`
 	Options      []AssignmentOption `gorm:"foreignKey:QuestionID;constraint:OnDelete:CASCADE;" json:"options"`
 }

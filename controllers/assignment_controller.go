@@ -20,7 +20,7 @@ import (
 
 // ==================== GIẢNG VIÊN TẠO ASSIGNMENT ====================
 
-// Tạo assignment từ Gemini (dựa trên ExtractedText)
+// Tạo assignment từ Gemini (dựa trên ExtractedText) với Difficulty + AllowReview
 func CreateAssignmentFromGemini(c *gin.Context) {
 	db := c.MustGet("db").(*gorm.DB)
 	userIDStr := c.GetString("user_id")
@@ -38,16 +38,22 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 	}
 
 	var req struct {
-		PodcastID    string     `json:"podcast_id" binding:"required"`
-		Title        string     `json:"title" binding:"required"`
-		Description  string     `json:"description"`
-		DueDate      *time.Time `json:"due_date"`
-		MaxAttempts  int        `json:"max_attempts"`
-		TimeLimit    int        `json:"time_limit"`
-		PassScore    float64    `json:"pass_score"`
-		NumQuestions int        `json:"num_questions"` // Số câu hỏi cần tạo
-		HasPassword  bool       `json:"has_password"`
-		Password     string     `json:"password"`
+		PodcastID     string     `json:"podcast_id" binding:"required"`
+		Title         string     `json:"title" binding:"required"`
+		Description   string     `json:"description"`
+		DueDate       *time.Time `json:"due_date"`
+		MaxAttempts   int        `json:"max_attempts"`
+		TimeLimit     int        `json:"time_limit"`
+		PassScore     float64    `json:"pass_score"`
+		NumQuestions  int        `json:"num_questions"`
+		HasPassword   bool       `json:"has_password"`
+		Password      string     `json:"password"`
+		AllowReview   bool       `json:"allow_review"`
+		DifficultyRat struct {
+			Easy   int `json:"easy"`   // % câu dễ
+			Medium int `json:"medium"` // % câu trung bình
+			Hard   int `json:"hard"`   // % câu khó
+		} `json:"difficulty_ratio"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -55,7 +61,7 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 		return
 	}
 
-	// Validate
+	// Set default values
 	if req.MaxAttempts == 0 {
 		req.MaxAttempts = 1
 	}
@@ -67,7 +73,6 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 	}
 
 	podcastUUID, _ := uuid.Parse(req.PodcastID)
-	// Lấy podcast
 	var podcast models.Podcast
 	if err := db.Preload("Document").First(&podcast, "id = ?", podcastUUID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy podcast"})
@@ -75,7 +80,6 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 	}
 
 	doc := podcast.Document
-
 	if doc.ExtractedText == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Tài liệu của podcast chưa có nội dung"})
 		return
@@ -94,6 +98,7 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 		CreatedBy:   userUUID,
 		HasPassword: req.HasPassword,
 		Password:    req.Password,
+		AllowReview: req.AllowReview,
 	}
 
 	if err := db.Create(&assignment).Error; err != nil {
@@ -101,85 +106,113 @@ func CreateAssignmentFromGemini(c *gin.Context) {
 		return
 	}
 
-	// Chia nhỏ văn bản
+	// Chia văn bản
 	chunks := SplitTextIntoChunksSmart(doc.ExtractedText, 2000)
 
 	allQuestions := []models.AssignmentQuestion{}
 	questionsPerChunk := (req.NumQuestions + len(chunks) - 1) / len(chunks)
 
+	// Tính số câu theo độ khó
+	numEasy := req.NumQuestions * req.DifficultyRat.Easy / 100
+	numMedium := req.NumQuestions * req.DifficultyRat.Medium / 100
+	numHard := req.NumQuestions - numEasy - numMedium
+
+	difficultyQueue := []string{}
+	for i := 0; i < numEasy; i++ {
+		difficultyQueue = append(difficultyQueue, "easy")
+	}
+	for i := 0; i < numMedium; i++ {
+		difficultyQueue = append(difficultyQueue, "medium")
+	}
+	for i := 0; i < numHard; i++ {
+		difficultyQueue = append(difficultyQueue, "hard")
+	}
+
+	// TÍNH ĐIỂM CHO MỖI CÂU HỎI - CHIA ĐỀU 10 ĐIỂM
+	pointsPerQuestion := 10.0 / float64(req.NumQuestions)
+
+	// Sinh câu hỏi
+	qCount := 0
 	for idx, chunk := range chunks {
-		if len(allQuestions) >= req.NumQuestions {
+		if qCount >= req.NumQuestions {
 			break
 		}
 
-		prompt := fmt.Sprintf(`
+		questionsForThisChunk := questionsPerChunk
+		if qCount+questionsForThisChunk > req.NumQuestions {
+			questionsForThisChunk = req.NumQuestions - qCount
+		}
+
+		for i := 0; i < questionsForThisChunk; i++ {
+			difficulty := difficultyQueue[qCount]
+
+			prompt := fmt.Sprintf(`
 Bạn là AI tạo câu hỏi trắc nghiệm đánh giá.
-Tạo %d câu hỏi trắc nghiệm từ đoạn văn sau bằng tiếng Việt.
+Tạo 1 câu hỏi trắc nghiệm %s từ đoạn podcast sau bằng tiếng Việt.
 
 Yêu cầu:
-- Mỗi câu có 4 lựa chọn (A, B, C, D)
-- Chỉ 1 đáp án đúng
-- Câu hỏi đánh giá sự hiểu biết sâu sắc, không chỉ thuộc lòng
-- Thêm trường "explanation" giải thích tại sao đáp án đúng
-- Thêm trường "points": điểm của câu (2.0 - 1.0 cho câu dễ, 0.5 cho câu khó)
-- Có thể ghi theo giáo trình hoặc theo podcast chứ không được ghi theo đoạn văn
+- 4 lựa chọn (A, B, C, D)
+- 1 đáp án đúng
+- Câu hỏi đánh giá sự hiểu biết, không chỉ thuộc lòng
+- Thêm "explanation" giải thích đáp án
+- Thêm "points": %.2f (mỗi câu có cùng điểm số)
+- Có thể theo giáo trình hoặc theo podcast, không copy đoạn văn
+- Ghi rõ trường "is_correct": true cho lựa chọn đúng, false cho các lựa chọn sai.
+
 Trả về JSON:
-[
-  {
+{
     "question": "Câu hỏi?",
     "explanation": "Giải thích đáp án",
-    "points": 1.0,
+    "points": %.2f,
     "options": [
-      {"text": "A", "is_correct": true},
-      {"text": "B", "is_correct": false},
-      {"text": "C", "is_correct": false},
-      {"text": "D", "is_correct": false}
+        {"text": "A", "is_correct": false/true},
+        {"text": "B", "is_correct": false/true},
+        {"text": "C", "is_correct": false/true},
+        {"text": "D", "is_correct": false/true}
     ]
-  }
-]
+}
 
 Đoạn văn số %d:
 %s
-`, questionsPerChunk, idx+1, chunk)
+`, difficulty, pointsPerQuestion, pointsPerQuestion, idx+1, chunk)
 
-		rawResp, err := services.GeminiGenerateText(prompt)
-		if err != nil {
-			fmt.Printf("Gemini lỗi ở đoạn %d: %v\n", idx+1, err)
-			continue
-		}
-
-		clean := strings.TrimSpace(rawResp)
-		clean = strings.Trim(clean, "`")
-		clean = strings.TrimPrefix(clean, "json")
-		clean = strings.TrimSpace(clean)
-
-		type OptDTO struct {
-			Text      string `json:"text"`
-			IsCorrect bool   `json:"is_correct"`
-		}
-		type QA struct {
-			Question    string   `json:"question"`
-			Explanation string   `json:"explanation"`
-			Points      float64  `json:"points"`
-			Options     []OptDTO `json:"options"`
-		}
-
-		var arr []QA
-		if err := json.Unmarshal([]byte(clean), &arr); err != nil {
-			fmt.Printf("Parse JSON lỗi ở đoạn %d: %v\n", idx+1, err)
-			continue
-		}
-
-		for _, qa := range arr {
-			if len(allQuestions) >= req.NumQuestions {
-				break
+			rawResp, err := services.GeminiGenerateText(prompt)
+			if err != nil {
+				fmt.Printf("Gemini lỗi ở đoạn %d: %v\n", idx+1, err)
+				continue
 			}
+
+			clean := strings.TrimSpace(rawResp)
+			clean = strings.Trim(clean, "`")
+			clean = strings.TrimPrefix(clean, "json")
+			clean = strings.TrimSpace(clean)
+
+			type OptDTO struct {
+				Text      string `json:"text"`
+				IsCorrect bool   `json:"is_correct"`
+			}
+			type QA struct {
+				Question    string   `json:"question"`
+				Explanation string   `json:"explanation"`
+				Points      float64  `json:"points"`
+				Options     []OptDTO `json:"options"`
+			}
+
+			var qa QA
+			if err := json.Unmarshal([]byte(clean), &qa); err != nil {
+				fmt.Printf("Parse JSON lỗi ở đoạn %d: %v\n", idx+1, err)
+				continue
+			}
+
+			// GHI ĐÈ POINTS ĐỂ ĐẢM BẢO MỖI CÂU CÓ CÙNG ĐIỂM
+			qa.Points = pointsPerQuestion
 
 			q := models.AssignmentQuestion{
 				AssignmentID: assignment.ID,
 				Question:     qa.Question,
 				Explanation:  qa.Explanation,
-				Points:       qa.Points,
+				Points:       qa.Points, // Sử dụng điểm đã tính (chia đều)
+				Difficulty:   difficulty,
 				SortOrder:    len(allQuestions) + 1,
 			}
 
@@ -198,6 +231,10 @@ Trả về JSON:
 			}
 
 			allQuestions = append(allQuestions, q)
+			qCount++
+			if qCount >= req.NumQuestions {
+				break
+			}
 		}
 	}
 
@@ -324,8 +361,13 @@ func GetTeacherAssignments(c *gin.Context) {
 	userIDStr := c.GetString("user_id")
 	role := c.GetString("role")
 
-	// --- QUERY SEARCH PARAMETERS ---
-	search := c.Query("search") // nhận search chung
+	// NHẬN TẤT CẢ QUERY PARAMS
+	search := c.Query("search")
+	subjectID := c.Query("subject_id")
+	chapterID := c.Query("chapter_id")
+	podcastSearch := c.Query("podcast_search")
+	status := c.Query("status") // "published" | "draft"
+
 	userUUID, _ := uuid.Parse(userIDStr)
 
 	query := db.Model(&models.Assignment{}).
@@ -344,32 +386,59 @@ func GetTeacherAssignments(c *gin.Context) {
 		query = query.Preload("Creator")
 	}
 
+	// JOIN TABLES ĐỂ FILTER
+	query = query.
+		Joins("LEFT JOIN podcasts ON podcasts.id = assignments.podcast_id").
+		Joins("LEFT JOIN chapters ON chapters.id = podcasts.chapter_id").
+		Joins("LEFT JOIN subjects ON subjects.id = chapters.subject_id")
+
 	// -------------------------
-	// SEARCH
-	// Tìm theo:
-	// - tên bài tập
-	// - tên chương
-	// - tên môn học
-	// - tên podcast
+	// FILTER THEO MÔN HỌC
+	// -------------------------
+	if subjectID != "" {
+		query = query.Where("subjects.id = ?", subjectID)
+	}
+
+	// -------------------------
+	// FILTER THEO CHƯƠNG
+	// -------------------------
+	if chapterID != "" {
+		query = query.Where("chapters.id = ?", chapterID)
+	}
+
+	// -------------------------
+	// FILTER THEO STATUS
+	// -------------------------
+	switch status {
+	case "published":
+		query = query.Where("assignments.is_published = ?", true)
+	case "draft":
+		query = query.Where("assignments.is_published = ?", false)
+	}
+
+	// -------------------------
+	// SEARCH TỔNG HỢP (tên bài tập)
 	// -------------------------
 	if search != "" {
 		like := "%" + search + "%"
+		query = query.Where("assignments.title ILIKE ?", like)
+	}
 
-		query = query.
-			Joins("LEFT JOIN podcasts ON podcasts.id = assignments.podcast_id").
-			Joins("LEFT JOIN chapters ON chapters.id = podcasts.chapter_id").
-			Joins("LEFT JOIN subjects ON subjects.id = chapters.subject_id").
-			Where(`
-				assignments.title ILIKE ?
-				OR podcasts.title ILIKE ?
-				OR chapters.title ILIKE ?
-				OR subjects.name ILIKE ?
-			`, like, like, like, like)
+	// -------------------------
+	// SEARCH THEO TÊN PODCAST
+	// -------------------------
+	if podcastSearch != "" {
+		like := "%" + podcastSearch + "%"
+		query = query.Where("podcasts.title ILIKE ?", like)
 	}
 
 	var assignments []models.Assignment
 
-	if err := query.Order("assignments.created_at DESC").Find(&assignments).Error; err != nil {
+	// DISTINCT để tránh duplicate do JOIN
+	if err := query.
+		Distinct("assignments.*").
+		Order("assignments.created_at DESC").
+		Find(&assignments).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách bài tập"})
 		return
 	}
@@ -456,6 +525,7 @@ func UpdateAssignment(c *gin.Context) {
 		IsPublished bool       `json:"is_published"`
 		HasPassword bool       `json:"has_password"`
 		Password    string     `json:"password"`
+		AllowReview bool       `json:"allow_review"` // Cho phép sinh viên xem đáp án
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -477,6 +547,8 @@ func UpdateAssignment(c *gin.Context) {
 	}
 	assignment.IsPublished = req.IsPublished
 	assignment.HasPassword = req.HasPassword
+	assignment.AllowReview = req.AllowReview
+
 	assignment.Password = req.Password
 
 	if err := db.Save(&assignment).Error; err != nil {
@@ -760,6 +832,269 @@ func GetAssignmentSubmissionDetailTeacher(c *gin.Context) {
 	// Trả dữ liệu
 	c.JSON(200, gin.H{
 		"submission": submission,
+	})
+}
+
+// Lấy danh sách câu hỏi của một assignment (dành cho giảng viên)
+func GetAssignmentQuestionsForTeacher(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	role := c.GetString("role")
+	userIDStr := c.GetString("user_id")
+
+	assignmentIDStr := c.Param("id")
+	assignmentUUID, err := uuid.Parse(assignmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	// Build query kiểm tra assignment có thuộc quyền giảng viên không
+	query := db.Model(&models.Assignment{})
+
+	if role == string(models.RoleLecturer) {
+		userUUID, _ := uuid.Parse(userIDStr)
+		query = query.Where("assignments.created_by = ?", userUUID)
+	}
+
+	// Check assignment tồn tại & có quyền xem
+	var assignment models.Assignment
+	if err := query.Where("assignments.id = ?", assignmentUUID).First(&assignment).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không có quyền xem bài tập này"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi server"})
+		}
+		return
+	}
+
+	// Load danh sách câu hỏi + options
+	var questions []models.AssignmentQuestion
+	if err := db.
+		Preload("Options", func(db *gorm.DB) *gorm.DB {
+			return db.Order("assignment_options.sort_order ASC")
+		}).
+		Where("assignment_id = ?", assignmentUUID).
+		Order("sort_order ASC").
+		Find(&questions).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy danh sách câu hỏi"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"assignment_id": assignmentUUID,
+		"title":         assignment.Title,
+		"questions":     questions,
+	})
+}
+
+// Thêm câu hỏi
+func CreateAssignmentQuestion(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	role := c.GetString("role")
+	userID := c.GetString("user_id")
+
+	assignmentIDStr := c.Param("id")
+	assignmentUUID, err := uuid.Parse(assignmentIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	// Check quyền
+	query := db.Model(&models.Assignment{})
+	if role == string(models.RoleLecturer) {
+		userUUID, _ := uuid.Parse(userID)
+		query = query.Where("assignments.created_by = ?", userUUID)
+	}
+
+	var assignment models.Assignment
+	if err := query.Where("id = ?", assignmentUUID).First(&assignment).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Không có quyền thêm câu hỏi vào bài tập này"})
+		return
+	}
+
+	// Parse body
+	var body struct {
+		Question    string                    `json:"question"`
+		Difficulty  string                    `json:"difficulty"`
+		Explanation string                    `json:"explanation"`
+		Points      float64                   `json:"points"`
+		SortOrder   int                       `json:"sort_order"`
+		Options     []models.AssignmentOption `json:"options"`
+	}
+
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Tạo câu hỏi
+	q := models.AssignmentQuestion{
+		ID:           uuid.New(),
+		AssignmentID: assignmentUUID,
+		Question:     body.Question,
+		Difficulty:   body.Difficulty,
+		Explanation:  body.Explanation,
+		Points:       body.Points,
+		SortOrder:    body.SortOrder,
+	}
+
+	if err := db.Create(&q).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo câu hỏi"})
+		return
+	}
+
+	// Thêm đáp án (options)
+	for i := range body.Options {
+		body.Options[i].ID = uuid.New()
+		body.Options[i].QuestionID = q.ID
+	}
+
+	if len(body.Options) > 0 {
+		if err := db.Create(&body.Options).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo đáp án"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Tạo câu hỏi thành công",
+		"question": q,
+		"options":  body.Options,
+	})
+}
+
+// Sửa câu hỏi
+func UpdateAssignmentQuestion(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	role := c.GetString("role")
+	userID := c.GetString("user_id")
+
+	qID := c.Param("questionId")
+	qUUID, err := uuid.Parse(qID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	// Load câu hỏi + assignment
+	var question models.AssignmentQuestion
+	if err := db.Preload("Assignment").Preload("Options").
+		Where("id = ?", qUUID).First(&question).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy câu hỏi"})
+		return
+	}
+
+	// Kiểm tra quyền
+	if role == string(models.RoleLecturer) && question.Assignment.CreatedBy.String() != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Không có quyền chỉnh sửa câu hỏi này"})
+		return
+	}
+
+	// Parse body
+	var body struct {
+		Question    string                    `json:"question"`
+		Difficulty  string                    `json:"difficulty"`
+		Explanation string                    `json:"explanation"`
+		Points      float64                   `json:"points"`
+		SortOrder   int                       `json:"sort_order"`
+		Options     []models.AssignmentOption `json:"options"`
+	}
+	if err := c.BindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// Update câu hỏi
+	question.Question = body.Question
+	question.Difficulty = body.Difficulty
+	question.Explanation = body.Explanation
+	question.Points = body.Points
+	question.SortOrder = body.SortOrder
+	if err := db.Save(&question).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể cập nhật câu hỏi"})
+		return
+	}
+
+	// Map option hiện tại
+	existingOpts := map[string]models.AssignmentOption{}
+	for _, o := range question.Options {
+		existingOpts[o.ID.String()] = o
+	}
+
+	// Danh sách ID option frontend giữ lại
+	currentIDs := map[string]bool{}
+
+	// Xử lý từng option trong payload
+	for _, opt := range body.Options {
+		if opt.ID != uuid.Nil {
+			// --- CASE 1: Update Option ---
+			currentIDs[opt.ID.String()] = true
+
+			db.Model(&models.AssignmentOption{}).
+				Where("id = ?", opt.ID).
+				Updates(map[string]interface{}{
+					"option_text": opt.OptionText,
+					"is_correct":  opt.IsCorrect,
+					"sort_order":  opt.SortOrder,
+				})
+		} else {
+			// --- CASE 2: Add new option ---
+			opt.ID = uuid.New()
+			opt.QuestionID = question.ID
+			db.Create(&opt)
+			currentIDs[opt.ID.String()] = true
+		}
+	}
+
+	// --- CASE 3: Delete removed options ---
+	for id, oldOpt := range existingOpts {
+		if !currentIDs[id] {
+			db.Delete(&oldOpt)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Cập nhật thành công",
+	})
+}
+
+// Xóa câu hỏi
+func DeleteAssignmentQuestion(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	role := c.GetString("role")
+	userID := c.GetString("user_id")
+
+	qID := c.Param("questionId")
+	qUUID, err := uuid.Parse(qID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
+		return
+	}
+
+	// Load câu hỏi + assignment để kiểm tra quyền
+	var question models.AssignmentQuestion
+	if err := db.Preload("Assignment").Where("id = ?", qUUID).First(&question).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy câu hỏi"})
+		return
+	}
+
+	if role == string(models.RoleLecturer) {
+		if question.Assignment.CreatedBy.String() != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Không có quyền xóa câu hỏi này"})
+			return
+		}
+	}
+
+	// Xóa
+	if err := db.Delete(&question).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa câu hỏi"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Xóa câu hỏi thành công",
 	})
 }
 
