@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xuri/excelize/v2"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/vnkhanh/e-podcast-backend/models"
@@ -1569,4 +1571,286 @@ func CheckDraftSubmission(c *gin.Context) {
 		"has_draft":  true,
 		"submission": submission,
 	})
+}
+
+// Export kết quả bài tập ra Excel
+func ExportAssignmentSubmissions(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+
+	assUUID, err := uuid.Parse(assignmentID)
+	if err != nil {
+		c.JSON(400, gin.H{"error": "ID bài tập không hợp lệ"})
+		return
+	}
+
+	// Lấy thông tin assignment
+	var assignment models.Assignment
+	if err := db.Preload("Podcast").First(&assignment, "id = ?", assUUID).Error; err != nil {
+		c.JSON(404, gin.H{"error": "Không tìm thấy bài tập"})
+		return
+	}
+
+	// Lấy tất cả submissions đã nộp
+	var submissions []models.AssignmentSubmission
+	if err := db.Where("assignment_id = ? AND submitted_at IS NOT NULL", assUUID).
+		Preload("User").
+		Preload("Answers").
+		Order("submitted_at DESC").
+		Find(&submissions).Error; err != nil {
+		c.JSON(500, gin.H{"error": "Không thể lấy danh sách bài nộp"})
+		return
+	}
+
+	// Tạo file Excel
+	f := excelize.NewFile()
+	sheetName := "Kết quả"
+	index, _ := f.NewSheet(sheetName)
+	f.SetActiveSheet(index)
+
+	// Thiết lập style cho header
+	headerStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold:  true,
+			Size:  12,
+			Color: "FFFFFF",
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"4472C4"},
+			Pattern: 1,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+	})
+
+	// Style cho dữ liệu
+	dataStyle, _ := f.NewStyle(&excelize.Style{
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+
+	// Style cho điểm đạt (xanh)
+	passStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold:  true,
+			Color: "006100",
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"C6EFCE"},
+			Pattern: 1,
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+
+	// Style cho điểm không đạt (đỏ)
+	failStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold:  true,
+			Color: "9C0006",
+		},
+		Fill: excelize.Fill{
+			Type:    "pattern",
+			Color:   []string{"FFC7CE"},
+			Pattern: 1,
+		},
+		Border: []excelize.Border{
+			{Type: "left", Color: "000000", Style: 1},
+			{Type: "top", Color: "000000", Style: 1},
+			{Type: "bottom", Color: "000000", Style: 1},
+			{Type: "right", Color: "000000", Style: 1},
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+
+	// Thông tin bài tập (merge cells)
+	f.MergeCell(sheetName, "A1", "H1")
+	f.SetCellValue(sheetName, "A1", "KẾT QUẢ BÀI TẬP: "+assignment.Title)
+	titleStyle, _ := f.NewStyle(&excelize.Style{
+		Font: &excelize.Font{
+			Bold: true,
+			Size: 16,
+		},
+		Alignment: &excelize.Alignment{
+			Horizontal: "center",
+			Vertical:   "center",
+		},
+	})
+	f.SetCellStyle(sheetName, "A1", "H1", titleStyle)
+	f.SetRowHeight(sheetName, 1, 30)
+
+	// Thông tin bổ sung
+	f.MergeCell(sheetName, "A2", "H2")
+	f.SetCellValue(sheetName, "A2", fmt.Sprintf("Podcast: %s | Tổng số bài nộp: %d",
+		assignment.Podcast.Title, len(submissions)))
+
+	// Header row (row 4)
+	headers := []string{
+		"STT",
+		"Họ và tên",
+		"Email",
+		"Lần làm",
+		"Điểm",
+		"Điểm tối đa",
+		"Trạng thái",
+		"Thời gian nộp",
+	}
+
+	for i, header := range headers {
+		cell := fmt.Sprintf("%c4", 'A'+i)
+		f.SetCellValue(sheetName, cell, header)
+		f.SetCellStyle(sheetName, cell, cell, headerStyle)
+	}
+
+	// Set column widths
+	f.SetColWidth(sheetName, "A", "A", 6)
+	f.SetColWidth(sheetName, "B", "B", 25)
+	f.SetColWidth(sheetName, "C", "C", 30)
+	f.SetColWidth(sheetName, "D", "D", 10)
+	f.SetColWidth(sheetName, "E", "E", 10)
+	f.SetColWidth(sheetName, "F", "F", 12)
+	f.SetColWidth(sheetName, "G", "G", 15)
+	f.SetColWidth(sheetName, "H", "H", 20)
+
+	// Data rows
+	for i, sub := range submissions {
+		row := i + 5
+
+		// STT
+		f.SetCellValue(sheetName, fmt.Sprintf("A%d", row), i+1)
+		f.SetCellStyle(sheetName, fmt.Sprintf("A%d", row), fmt.Sprintf("A%d", row), dataStyle)
+
+		// Họ và tên
+		f.SetCellValue(sheetName, fmt.Sprintf("B%d", row), sub.User.FullName)
+		f.SetCellStyle(sheetName, fmt.Sprintf("B%d", row), fmt.Sprintf("B%d", row), dataStyle)
+
+		// Email
+		f.SetCellValue(sheetName, fmt.Sprintf("C%d", row), sub.User.Email)
+		f.SetCellStyle(sheetName, fmt.Sprintf("C%d", row), fmt.Sprintf("C%d", row), dataStyle)
+
+		// Lần làm
+		f.SetCellValue(sheetName, fmt.Sprintf("D%d", row), sub.AttemptNum)
+		f.SetCellStyle(sheetName, fmt.Sprintf("D%d", row), fmt.Sprintf("D%d", row), dataStyle)
+
+		// Điểm
+		f.SetCellValue(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("%.2f", sub.Score))
+		if sub.IsPassed {
+			f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), passStyle)
+		} else {
+			f.SetCellStyle(sheetName, fmt.Sprintf("E%d", row), fmt.Sprintf("E%d", row), failStyle)
+		}
+
+		// Điểm tối đa
+		f.SetCellValue(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("%.2f", sub.MaxScore))
+		f.SetCellStyle(sheetName, fmt.Sprintf("F%d", row), fmt.Sprintf("F%d", row), dataStyle)
+
+		// Trạng thái
+		status := "Chưa đạt"
+		if sub.IsPassed {
+			status = "Đạt"
+		}
+		f.SetCellValue(sheetName, fmt.Sprintf("G%d", row), status)
+		if sub.IsPassed {
+			f.SetCellStyle(sheetName, fmt.Sprintf("G%d", row), fmt.Sprintf("G%d", row), passStyle)
+		} else {
+			f.SetCellStyle(sheetName, fmt.Sprintf("G%d", row), fmt.Sprintf("G%d", row), failStyle)
+		}
+
+		// Thời gian nộp
+		submittedTime := ""
+		if sub.SubmittedAt != nil {
+			submittedTime = sub.SubmittedAt.Format("02/01/2006 15:04")
+		}
+		f.SetCellValue(sheetName, fmt.Sprintf("H%d", row), submittedTime)
+		f.SetCellStyle(sheetName, fmt.Sprintf("H%d", row), fmt.Sprintf("H%d", row), dataStyle)
+	}
+
+	// Thống kê (cuối file)
+	statsRow := len(submissions) + 7
+
+	// Tính toán thống kê
+	var totalPassed, totalFailed int
+	var totalScore, avgScore float64
+	for _, sub := range submissions {
+		if sub.IsPassed {
+			totalPassed++
+		} else {
+			totalFailed++
+		}
+		totalScore += sub.Score
+	}
+	if len(submissions) > 0 {
+		avgScore = totalScore / float64(len(submissions))
+	}
+
+	f.MergeCell(sheetName, fmt.Sprintf("A%d", statsRow), fmt.Sprintf("H%d", statsRow))
+	f.SetCellValue(sheetName, fmt.Sprintf("A%d", statsRow), "THỐNG KÊ")
+	f.SetCellStyle(sheetName, fmt.Sprintf("A%d", statsRow), fmt.Sprintf("H%d", statsRow), headerStyle)
+
+	statsRow++
+	f.SetCellValue(sheetName, fmt.Sprintf("A%d", statsRow), "Tổng số bài nộp:")
+	f.SetCellValue(sheetName, fmt.Sprintf("B%d", statsRow), len(submissions))
+
+	statsRow++
+	f.SetCellValue(sheetName, fmt.Sprintf("A%d", statsRow), "Số bài đạt:")
+	f.SetCellValue(sheetName, fmt.Sprintf("B%d", statsRow), totalPassed)
+	f.SetCellStyle(sheetName, fmt.Sprintf("B%d", statsRow), fmt.Sprintf("B%d", statsRow), passStyle)
+
+	statsRow++
+	f.SetCellValue(sheetName, fmt.Sprintf("A%d", statsRow), "Số bài không đạt:")
+	f.SetCellValue(sheetName, fmt.Sprintf("B%d", statsRow), totalFailed)
+	f.SetCellStyle(sheetName, fmt.Sprintf("B%d", statsRow), fmt.Sprintf("B%d", statsRow), failStyle)
+
+	statsRow++
+	f.SetCellValue(sheetName, fmt.Sprintf("A%d", statsRow), "Điểm trung bình:")
+	f.SetCellValue(sheetName, fmt.Sprintf("B%d", statsRow), fmt.Sprintf("%.2f", avgScore))
+
+	// Delete default Sheet1 if exists
+	f.DeleteSheet("Sheet1")
+
+	// Set buffer
+	buffer, err := f.WriteToBuffer()
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Không thể tạo file Excel"})
+		return
+	}
+
+	// Send file
+	fileName := fmt.Sprintf("Ket_qua_%s_%s.xlsx",
+		strings.ReplaceAll(assignment.Title, " ", "_"),
+		time.Now().Format("20060102_150405"))
+
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", fileName))
+	c.Header("Content-Transfer-Encoding", "binary")
+	c.Data(200, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", buffer.Bytes())
 }

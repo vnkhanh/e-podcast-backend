@@ -187,6 +187,9 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		assignments.DELETE("/questions/:questionId", controllers.DeleteAssignmentQuestion)
 		assignments.GET("/:id", controllers.GetAssignmentDetailTeacher)
 
+		// Xuất file
+		assignments.GET("/:id/export", controllers.ExportAssignmentSubmissions)
+
 	}
 	// ==================== Quản lý tag ====================
 	tags := admin.Group("/tags")
