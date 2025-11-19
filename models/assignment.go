@@ -56,19 +56,20 @@ type AssignmentOption struct {
 
 // ASSIGNMENT SUBMISSION (BÀI LÀM)
 type AssignmentSubmission struct {
-	ID           uuid.UUID          `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
-	AssignmentID uuid.UUID          `gorm:"type:uuid;not null" json:"assignment_id"`
-	Assignment   Assignment         `gorm:"constraint:OnDelete:CASCADE;" json:"assignment"`
-	UserID       uuid.UUID          `gorm:"type:uuid;not null" json:"user_id"`
-	User         User               `gorm:"constraint:OnDelete:CASCADE;" json:"user"`
-	AttemptNum   int                `gorm:"default:1" json:"attempt_num"` // Lần làm thứ mấy
-	Score        float64            `gorm:"type:numeric(5,2)" json:"score"`
-	MaxScore     float64            `gorm:"type:numeric(5,2)" json:"max_score"` // Tổng điểm tối đa
-	IsPassed     bool               `gorm:"default:false" json:"is_passed"`
-	TimeSpent    int                `json:"time_spent"` // Thời gian làm bài (giây)
-	StartedAt    time.Time          `gorm:"autoCreateTime" json:"started_at"`
-	SubmittedAt  time.Time          `gorm:"autoUpdateTime" json:"submitted_at"`
-	Answers      []AssignmentAnswer `gorm:"foreignKey:SubmissionID;constraint:OnDelete:CASCADE;" json:"answers"`
+	ID           uuid.UUID  `gorm:"type:uuid;default:gen_random_uuid();primaryKey" json:"id"`
+	AssignmentID uuid.UUID  `gorm:"type:uuid;not null" json:"assignment_id"`
+	Assignment   Assignment `gorm:"constraint:OnDelete:CASCADE;" json:"assignment"`
+	UserID       uuid.UUID  `gorm:"type:uuid;not null" json:"user_id"`
+	User         User       `gorm:"constraint:OnDelete:CASCADE;" json:"user"`
+	AttemptNum   int        `gorm:"default:1" json:"attempt_num"` // Lần làm thứ mấy
+	Score        float64    `gorm:"type:numeric(5,2)" json:"score"`
+	MaxScore     float64    `gorm:"type:numeric(5,2)" json:"max_score"` // Tổng điểm tối đa
+	IsPassed     bool       `gorm:"default:false" json:"is_passed"`
+	TimeSpent    int        `json:"time_spent"` // Thời gian làm bài (giây)
+	StartedAt    time.Time  `gorm:"autoCreateTime" json:"started_at"`
+	SubmittedAt  *time.Time `json:"submitted_at,omitempty"` // Nullable - chỉ set khi nộp
+
+	Answers []AssignmentAnswer `gorm:"foreignKey:SubmissionID;constraint:OnDelete:CASCADE;" json:"answers"`
 }
 
 // ASSIGNMENT ANSWER (CÂU TRẢ LỜI)

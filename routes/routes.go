@@ -95,8 +95,15 @@ func SetupRouter(r *gin.Engine, db *gorm.DB) *gin.Engine {
 		user.GET("/assignments/:id", middleware.AuthMiddleware(), controllers.GetAssignmentDetailStudent)
 		user.POST("/assignments/:id/submit", middleware.AuthMiddleware(), controllers.SubmitAssignment)
 		user.GET("/assignments/:id/submissions", middleware.AuthMiddleware(), controllers.GetUserSubmissions)
-		user.GET("/submissions/:submission_id", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
+
+		user.GET("/assignments/:id/submissions/:submissionId", middleware.AuthMiddleware(), controllers.GetSubmissionDetail)
+
 		user.POST("/assignments/:id/verify-password", middleware.AuthMiddleware(), controllers.VerifyAssignmentPassword)
+
+		user.POST("/assignments/:id/start", middleware.AuthMiddleware(), controllers.StartAssignment)
+		user.POST("/assignments/submissions/:submissionId/save", middleware.AuthMiddleware(), controllers.SaveAssignmentProgress)
+
+		user.GET("/assignments/:id/check-draft", middleware.AuthMiddleware(), controllers.CheckDraftSubmission)
 	}
 	admin := api.Group("/admin")
 	{

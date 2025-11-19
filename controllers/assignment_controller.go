@@ -1164,6 +1164,7 @@ func GetAssignmentDetailStudent(c *gin.Context) {
 
 	var assignment models.Assignment
 	if err := db.Preload("Questions.Options").
+		Preload("Creator"). // preload creator info
 		First(&assignment, "id = ?", assUUID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài tập"})
 		return
@@ -1173,197 +1174,45 @@ func GetAssignmentDetailStudent(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Bài tập chưa được công bố"})
 		return
 	}
-	// Kiểm tra password nếu có
+
+	// Ẩn password khi trả về cho client
 	if assignment.HasPassword {
-		// Ẩn password khi trả về cho client
 		assignment.Password = ""
 	}
+
 	// Lấy số lần đã làm của user
 	var attemptsUsed int64
 	db.Model(&models.AssignmentSubmission{}).
 		Where("assignment_id = ? AND user_id = ?", assignment.ID, userUUID).
 		Count(&attemptsUsed)
 
-	c.JSON(http.StatusOK, gin.H{
-		"assignment":    assignment,
-		"attempts_used": attemptsUsed,
-		"attempts_left": assignment.MaxAttempts - int(attemptsUsed),
-	})
-}
-
-// Nộp bài assignment
-func SubmitAssignment(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
-	assignmentID := c.Param("id")
-	userIDStr := c.GetString("user_id")
-
-	userUUID, _ := uuid.Parse(userIDStr)
-	assUUID, _ := uuid.Parse(assignmentID)
-
-	var req struct {
-		Answers []struct {
-			QuestionID uuid.UUID  `json:"question_id"`
-			SelectedID *uuid.UUID `json:"selected_id"`
-		} `json:"answers"`
-		TimeSpent int `json:"time_spent"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Lấy assignment
-	var assignment models.Assignment
-	if err := db.Preload("Questions.Options").
-		First(&assignment, "id = ?", assUUID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài tập"})
-		return
-	}
-
-	// Kiểm tra attempts
-	var attemptsUsed int64
+	// Tổng số lần nộp của tất cả sinh viên
+	var totalSubmissions int64
 	db.Model(&models.AssignmentSubmission{}).
-		Where("assignment_id = ? AND user_id = ?", assignment.ID, userUUID).
-		Count(&attemptsUsed)
+		Where("assignment_id = ?", assignment.ID).
+		Count(&totalSubmissions)
 
-	if int(attemptsUsed) >= assignment.MaxAttempts {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn đã hết lượt làm bài"})
-		return
-	}
+	// Điểm trung bình
+	var avgScore float64
+	db.Model(&models.AssignmentSubmission{}).
+		Select("AVG(score)").
+		Where("assignment_id = ?", assignment.ID).
+		Row().Scan(&avgScore)
 
-	// Chấm điểm
-	var totalScore float64
-	var maxScore float64
-	var answers []models.AssignmentAnswer
-
-	for _, q := range assignment.Questions {
-		maxScore += q.Points
-
-		var userAnswer *uuid.UUID
-		for _, ans := range req.Answers {
-			if ans.QuestionID == q.ID {
-				userAnswer = ans.SelectedID
-				break
-			}
-		}
-
-		var correctID uuid.UUID
-		for _, opt := range q.Options {
-			if opt.IsCorrect {
-				correctID = opt.ID
-				break
-			}
-		}
-
-		isCorrect := false
-		pointsEarned := 0.0
-		selectedID := uuid.Nil
-
-		if userAnswer != nil {
-			selectedID = *userAnswer
-			if selectedID == correctID {
-				isCorrect = true
-				pointsEarned = q.Points
-				totalScore += q.Points
-			}
-		}
-
-		answers = append(answers, models.AssignmentAnswer{
-			QuestionID:   q.ID,
-			SelectedID:   selectedID,
-			IsCorrect:    isCorrect,
-			PointsEarned: pointsEarned,
-		})
-	}
-
-	// Tính điểm thang 10
-	scorePercent := (totalScore / maxScore) * 10
-	isPassed := scorePercent >= assignment.PassScore
-
-	// Tạo submission
-	submission := models.AssignmentSubmission{
-		AssignmentID: assignment.ID,
-		UserID:       userUUID,
-		AttemptNum:   int(attemptsUsed) + 1,
-		Score:        scorePercent,
-		MaxScore:     10.0,
-		IsPassed:     isPassed,
-		TimeSpent:    req.TimeSpent,
-		StartedAt:    time.Now().Add(-time.Duration(req.TimeSpent) * time.Second),
-	}
-
-	if err := db.Create(&submission).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu bài làm"})
-		return
-	}
-
-	// Lưu answers
-	for i := range answers {
-		answers[i].SubmissionID = submission.ID
-		db.Create(&answers[i])
+	// Kiểm tra hết hạn
+	isExpired := false
+	if assignment.DueDate != nil && time.Now().After(*assignment.DueDate) {
+		isExpired = true
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":       "Nộp bài thành công",
-		"submission_id": submission.ID,
-		"score":         scorePercent,
-		"max_score":     10.0,
-		"is_passed":     isPassed,
-		"total_points":  totalScore,
-		"max_points":    maxScore,
-	})
-}
-
-// Xem kết quả bài làm
-func GetSubmissionDetail(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
-	submissionID := c.Param("submission_id")
-	userIDStr := c.GetString("user_id")
-
-	userUUID, _ := uuid.Parse(userIDStr)
-	subUUID, _ := uuid.Parse(submissionID)
-
-	var submission models.AssignmentSubmission
-	if err := db.Preload("Assignment").
-		Preload("Answers.Question.Options").
-		Preload("Answers.SelectedOption").
-		First(&submission, "id = ?", subUUID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài làm"})
-		return
-	}
-
-	if submission.UserID != userUUID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn không có quyền xem bài làm này"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"submission": submission,
-	})
-}
-
-// Lấy lịch sử làm bài của user
-func GetUserSubmissions(c *gin.Context) {
-	db := c.MustGet("db").(*gorm.DB)
-	assignmentID := c.Param("id")
-	userIDStr := c.GetString("user_id")
-
-	userUUID, _ := uuid.Parse(userIDStr)
-	assUUID, _ := uuid.Parse(assignmentID)
-
-	var submissions []models.AssignmentSubmission
-	if err := db.Where("assignment_id = ? AND user_id = ?", assUUID, userUUID).
-		Preload("Assignment").
-		Order("submitted_at DESC").
-		Find(&submissions).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy lịch sử làm bài"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"submissions": submissions,
-		"total":       len(submissions),
+		"assignment":        assignment,
+		"attempts_used":     attemptsUsed,
+		"attempts_left":     assignment.MaxAttempts - int(attemptsUsed),
+		"total_submissions": totalSubmissions,
+		"average_score":     avgScore,
+		"is_expired":        isExpired,
+		"allow_review":      assignment.AllowReview,
 	})
 }
 
@@ -1407,4 +1256,317 @@ func parseQuestionFile(file *multipart.FileHeader) ([]QuestionDTO, error) {
 	}
 
 	return questions, nil
+}
+
+// Nộp bài assignment
+func SubmitAssignment(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	assUUID, _ := uuid.Parse(assignmentID)
+
+	var req struct {
+		Answers []struct {
+			QuestionID uuid.UUID  `json:"question_id"`
+			SelectedID *uuid.UUID `json:"selected_id"`
+		} `json:"answers"`
+		TimeSpent int `json:"time_spent"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Tìm submission đang làm dở
+	var submission models.AssignmentSubmission
+	err := db.Preload("Assignment.Questions.Options").
+		Where("assignment_id = ? AND user_id = ? AND submitted_at IS NULL", assUUID, userUUID).
+		First(&submission).Error
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài làm"})
+		return
+	}
+
+	assignment := submission.Assignment
+
+	var totalScore float64
+	var maxScore float64
+
+	for _, q := range assignment.Questions {
+		maxScore += q.Points
+
+		var userAnswer *uuid.UUID
+		for _, ans := range req.Answers {
+			if ans.QuestionID == q.ID {
+				userAnswer = ans.SelectedID
+				break
+			}
+		}
+
+		var correctID uuid.UUID
+		for _, opt := range q.Options {
+			if opt.IsCorrect {
+				correctID = opt.ID
+				break
+			}
+		}
+
+		isCorrect := false
+		pointsEarned := 0.0
+		selectedID := uuid.Nil
+
+		if userAnswer != nil {
+			selectedID = *userAnswer
+			if selectedID == correctID {
+				isCorrect = true
+				pointsEarned = q.Points
+				totalScore += q.Points
+			}
+		}
+
+		// Tìm hoặc tạo câu trả lời
+		var answer models.AssignmentAnswer
+		err := db.Where("submission_id = ? AND question_id = ?", submission.ID, q.ID).First(&answer).Error
+		if err != nil {
+			answer = models.AssignmentAnswer{
+				SubmissionID: submission.ID,
+				QuestionID:   q.ID,
+			}
+		}
+
+		answer.SelectedID = selectedID
+		answer.IsCorrect = isCorrect
+		answer.PointsEarned = pointsEarned
+
+		if err != nil {
+			db.Create(&answer)
+		} else {
+			db.Save(&answer)
+		}
+	}
+
+	// Cập nhật submission
+	scorePercent := (totalScore / maxScore) * 10 // chuẩn thang 10
+	isPassed := scorePercent >= assignment.PassScore
+	now := time.Now()
+
+	submission.Score = scorePercent
+	submission.IsPassed = isPassed
+	submission.TimeSpent = req.TimeSpent
+	submission.SubmittedAt = &now
+
+	if err := db.Save(&submission).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lưu bài làm"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":       "Nộp bài thành công",
+		"submission_id": submission.ID,
+		"score":         scorePercent,
+		"max_score":     10.0,
+		"is_passed":     isPassed,
+		"total_points":  totalScore,
+		"max_points":    maxScore,
+	})
+}
+
+// Lấy lịch sử làm bài của user
+func GetUserSubmissions(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	assUUID, _ := uuid.Parse(assignmentID)
+
+	var submissions []models.AssignmentSubmission
+	if err := db.Where("assignment_id = ? AND user_id = ?", assUUID, userUUID).
+		Preload("Assignment").
+		Order("submitted_at DESC").
+		Find(&submissions).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể lấy lịch sử làm bài"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"submissions": submissions,
+		"total":       len(submissions),
+	})
+}
+
+// StartAssignment: tạo hoặc lấy submission draft
+func StartAssignment(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	assUUID, _ := uuid.Parse(assignmentID)
+
+	// Kiểm tra submission chưa nộp - THÊM PRELOAD ANSWERS
+	var submission models.AssignmentSubmission
+	err := db.Preload("Answers"). // ← THÊM DÒNG NÀY
+					Where("assignment_id = ? AND user_id = ? AND submitted_at IS NULL", assUUID, userUUID).
+					First(&submission).Error
+
+	if err == nil {
+		// Có submission chưa nộp
+		c.JSON(http.StatusOK, gin.H{
+			"submission": submission,
+			"message":    "Tiếp tục làm bài",
+		})
+		return
+	}
+
+	// Lấy assignment
+	var assignment models.Assignment
+	if err := db.First(&assignment, "id = ?", assUUID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài tập"})
+		return
+	}
+
+	// Kiểm tra lượt đã làm
+	var completedAttempts int64
+	db.Model(&models.AssignmentSubmission{}).
+		Where("assignment_id = ? AND user_id = ? AND submitted_at IS NOT NULL", assUUID, userUUID).
+		Count(&completedAttempts)
+
+	if int(completedAttempts) >= assignment.MaxAttempts {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bạn đã hết lượt làm bài"})
+		return
+	}
+
+	// Tạo submission mới
+	submission = models.AssignmentSubmission{
+		AssignmentID: assUUID,
+		UserID:       userUUID,
+		AttemptNum:   int(completedAttempts) + 1,
+		StartedAt:    time.Now(),
+		Score:        0,
+		MaxScore:     10.0,
+		IsPassed:     false,
+	}
+	if err := db.Create(&submission).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể tạo bài làm"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"submission": submission,
+		"message":    "Bắt đầu làm bài",
+	})
+}
+
+// SaveAssignmentProgress: autosave
+func SaveAssignmentProgress(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	submissionID := c.Param("submissionId")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	subUUID, _ := uuid.Parse(submissionID)
+
+	var req struct {
+		Answers []struct {
+			QuestionID uuid.UUID  `json:"question_id"`
+			SelectedID *uuid.UUID `json:"selected_id"`
+		} `json:"answers"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var submission models.AssignmentSubmission
+	if err := db.Where("id = ? AND user_id = ? AND submitted_at IS NULL", subUUID, userUUID).First(&submission).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy bài làm hoặc đã nộp rồi"})
+		return
+	}
+
+	// Xóa câu trả lời cũ
+	db.Where("submission_id = ?", subUUID).Delete(&models.AssignmentAnswer{})
+
+	// Lưu câu trả lời mới
+	for _, ans := range req.Answers {
+		if ans.SelectedID == nil {
+			continue
+		}
+		answer := models.AssignmentAnswer{
+			SubmissionID: subUUID,
+			QuestionID:   ans.QuestionID,
+			SelectedID:   *ans.SelectedID,
+			IsCorrect:    false,
+			PointsEarned: 0,
+		}
+		db.Create(&answer)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Đã lưu tiến trình"})
+}
+
+// GetSubmissionDetail: lấy submission hiện tại
+func GetSubmissionDetail(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+	submissionID := c.Param("submissionId")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	assUUID, _ := uuid.Parse(assignmentID)
+	subUUID, _ := uuid.Parse(submissionID)
+
+	var submission models.AssignmentSubmission
+	if err := db.Where("id = ? AND assignment_id = ? AND user_id = ?", subUUID, assUUID, userUUID).
+		Preload("Assignment.Questions.Options").
+		Preload("Answers.Question.Options").
+		Preload("Answers.SelectedOption").
+		First(&submission).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy lần làm bài"})
+		return
+	}
+
+	if !submission.Assignment.AllowReview {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Bài tập không cho phép xem lại"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"submission": submission})
+}
+
+// Kiểm tra xem user có submission draft không
+func CheckDraftSubmission(c *gin.Context) {
+	db := c.MustGet("db").(*gorm.DB)
+	assignmentID := c.Param("id")
+	userIDStr := c.GetString("user_id")
+
+	userUUID, _ := uuid.Parse(userIDStr)
+	assUUID, _ := uuid.Parse(assignmentID)
+
+	var submission models.AssignmentSubmission
+	err := db.Preload("Answers"). // ← THÊM PRELOAD
+					Where("assignment_id = ? AND user_id = ? AND submitted_at IS NULL", assUUID, userUUID).
+					First(&submission).Error
+
+	if err == gorm.ErrRecordNotFound {
+		c.JSON(http.StatusOK, gin.H{
+			"has_draft":  false,
+			"submission": nil,
+		})
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi kiểm tra bài làm"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"has_draft":  true,
+		"submission": submission,
+	})
 }
