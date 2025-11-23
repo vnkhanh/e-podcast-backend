@@ -32,8 +32,8 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 	errorPages := 0
 
 	fmt.Printf("\n=== BẮT ĐẦU TRÍCH XUẤT PDF ===\n")
-	fmt.Printf("📄 Tổng số trang: %d\n", totalPages)
-	fmt.Printf("📦 Kích thước file: %d bytes\n\n", buf.Len())
+	fmt.Printf("Tổng số trang: %d\n", totalPages)
+	fmt.Printf("Kích thước file: %d bytes\n\n", buf.Len())
 
 	// Theo dõi những trang có vấn đề
 	var problematicPages []int
@@ -41,7 +41,7 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 	for i := 1; i <= totalPages; i++ {
 		page := reader.Page(i)
 		if page.V.IsNull() {
-			fmt.Printf("⚠️  Trang %d: NULL page object\n", i)
+			fmt.Printf("Trang %d: NULL page object\n", i)
 			errorPages++
 			problematicPages = append(problematicPages, i)
 			continue
@@ -53,7 +53,7 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 		method := "GetPlainText"
 
 		if err != nil {
-			fmt.Printf("⚠️  Trang %d: GetPlainText failed (%v), trying GetTextByRow...\n", i, err)
+			fmt.Printf("Trang %d: GetPlainText failed (%v), trying GetTextByRow...\n", i, err)
 			// Fallback: dùng GetTextByRow
 			pageText = extractTextWithDetails(page)
 			method = "GetTextByRow"
@@ -68,13 +68,13 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 		if contentLength == 0 {
 			emptyPages++
 			problematicPages = append(problematicPages, i)
-			fmt.Printf("❌ Trang %d: RỖNG (method: %s)\n", i, method)
+			fmt.Printf("Trang %d: RỖNG (method: %s)\n", i, method)
 			textBuilder.WriteString(fmt.Sprintf("\n--- Trang %d (rỗng) ---\n", i))
 		} else {
 			successPages++
 			// Chỉ log mỗi 10 trang để không spam
 			if i%10 == 0 || i <= 5 || i >= totalPages-5 {
-				fmt.Printf("✅ Trang %d: %d ký tự (method: %s)\n", i, contentLength, method)
+				fmt.Printf("Trang %d: %d ký tự (method: %s)\n", i, contentLength, method)
 			}
 			textBuilder.WriteString(fmt.Sprintf("\n--- Trang %d ---\n", i))
 			textBuilder.WriteString(pageText)
@@ -84,15 +84,15 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 
 	// Báo cáo chi tiết
 	fmt.Printf("\n=== KẾT QUẢ TRÍCH XUẤT ===\n")
-	fmt.Printf("✅ Thành công: %d trang (%.1f%%)\n", successPages, float64(successPages)/float64(totalPages)*100)
-	fmt.Printf("⚠️  Rỗng: %d trang (%.1f%%)\n", emptyPages, float64(emptyPages)/float64(totalPages)*100)
-	fmt.Printf("❌ Lỗi: %d trang (%.1f%%)\n", errorPages, float64(errorPages)/float64(totalPages)*100)
-	fmt.Printf("📝 Tổng ký tự: %d\n", textBuilder.Len())
+	fmt.Printf("Thành công: %d trang (%.1f%%)\n", successPages, float64(successPages)/float64(totalPages)*100)
+	fmt.Printf("Rỗng: %d trang (%.1f%%)\n", emptyPages, float64(emptyPages)/float64(totalPages)*100)
+	fmt.Printf("Lỗi: %d trang (%.1f%%)\n", errorPages, float64(errorPages)/float64(totalPages)*100)
+	fmt.Printf("Tổng ký tự: %d\n", textBuilder.Len())
 
 	if len(problematicPages) > 0 && len(problematicPages) <= 20 {
-		fmt.Printf("\n🔍 Trang có vấn đề: %v\n", problematicPages)
+		fmt.Printf("\nTrang có vấn đề: %v\n", problematicPages)
 	} else if len(problematicPages) > 20 {
-		fmt.Printf("\n🔍 Có %d trang có vấn đề (quá nhiều để liệt kê)\n", len(problematicPages))
+		fmt.Printf("\nCó %d trang có vấn đề (quá nhiều để liệt kê)\n", len(problematicPages))
 	}
 
 	result := textBuilder.String()
@@ -102,22 +102,22 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 
 	fmt.Printf("\n=== CHẨN ĐOÁN ===\n")
 	if successRate < 0.3 {
-		fmt.Println("❌ PDF có thể là:")
+		fmt.Println("PDF có thể là:")
 		fmt.Println("   - Hình ảnh quét (cần OCR)")
 		fmt.Println("   - Bị mã hóa")
 		fmt.Println("   - Font đặc biệt không được hỗ trợ")
 		return result, fmt.Errorf("chỉ trích xuất được %d/%d trang (%.1f%%) - PDF có thể bị mã hóa hoặc là hình ảnh quét",
 			successPages, totalPages, successRate*100)
 	} else if successRate < 0.7 {
-		fmt.Printf("⚠️  Tỷ lệ thành công thấp (%.1f%%)\n", successRate*100)
+		fmt.Printf("Tỷ lệ thành công thấp (%.1f%%)\n", successRate*100)
 		fmt.Println("   - Một số trang có thể là hình ảnh")
 		fmt.Println("   - Font encoding không đồng nhất")
 	} else {
-		fmt.Printf("✅ Tỷ lệ thành công cao (%.1f%%)\n", successRate*100)
+		fmt.Printf("Tỷ lệ thành công cao (%.1f%%)\n", successRate*100)
 	}
 
 	if len(result) < 1000 && totalPages > 10 {
-		fmt.Printf("⚠️  Nội dung quá ngắn (%d ký tự) cho %d trang\n", len(result), totalPages)
+		fmt.Printf("Nội dung quá ngắn (%d ký tự) cho %d trang\n", len(result), totalPages)
 		return result, fmt.Errorf("nội dung quá ngắn (%d ký tự) cho %d trang - cần kiểm tra PDF", len(result), totalPages)
 	}
 
@@ -126,34 +126,34 @@ func ExtractTextFromPDF(file multipart.File) (string, error) {
 
 // ExtractTextFromPDFWithFallback: Thử nhiều phương pháp khác nhau
 func ExtractTextFromPDFWithFallback(file multipart.File) (string, error) {
-	fmt.Println("\n🔄 Bắt đầu trích xuất với fallback...")
+	fmt.Println("\nBắt đầu trích xuất với fallback...")
 
 	// Phương pháp 1: Dùng ledongthuc/pdf
 	text, err := ExtractTextFromPDF(file)
 
 	// Nếu thành công và có nội dung đủ, trả về
 	if err == nil && len(strings.TrimSpace(text)) > 500 {
-		fmt.Println("✅ Phương pháp 1 thành công!")
+		fmt.Println("Phương pháp 1 thành công!")
 		return text, nil
 	}
 
-	fmt.Printf("\n⚠️  Phương pháp 1 không đủ tốt (error: %v)\n", err)
-	fmt.Println("🔄 Thử phương pháp 2: Raw content extraction...")
+	fmt.Printf("\nPhương pháp 1 không đủ tốt (error: %v)\n", err)
+	fmt.Println("Thử phương pháp 2: Raw content extraction...")
 
 	// Phương pháp 2: Reset file pointer và thử đọc raw content
 	if seeker, ok := file.(io.Seeker); ok {
 		seeker.Seek(0, io.SeekStart)
 		rawText, rawErr := extractRawPDFContent(file)
 		if rawErr == nil && len(rawText) > len(text) {
-			fmt.Printf("✅ Phương pháp 2 tốt hơn! (%d vs %d ký tự)\n", len(rawText), len(text))
+			fmt.Printf("Phương pháp 2 tốt hơn! (%d vs %d ký tự)\n", len(rawText), len(text))
 			return rawText, nil
 		}
-		fmt.Printf("⚠️  Phương pháp 2 không tốt hơn (%d vs %d ký tự)\n", len(rawText), len(text))
+		fmt.Printf("Phương pháp 2 không tốt hơn (%d vs %d ký tự)\n", len(rawText), len(text))
 	}
 
 	// Trả về kết quả tốt nhất có được
 	if len(text) > 0 {
-		fmt.Println("⚠️  Trả về kết quả một phần từ phương pháp 1")
+		fmt.Println("Trả về kết quả một phần từ phương pháp 1")
 		return text, fmt.Errorf("trích xuất một phần: %w", err)
 	}
 
@@ -176,7 +176,7 @@ func extractRawPDFContent(file multipart.File) (string, error) {
 	totalPages := reader.NumPage()
 	successCount := 0
 
-	fmt.Printf("📄 Raw extraction: Processing %d pages...\n", totalPages)
+	fmt.Printf("Raw extraction: Processing %d pages...\n", totalPages)
 
 	for i := 1; i <= totalPages; i++ {
 		page := reader.Page(i)
@@ -211,7 +211,7 @@ func extractRawPDFContent(file multipart.File) (string, error) {
 		}
 	}
 
-	fmt.Printf("✅ Raw extraction: %d/%d pages extracted\n", successCount, totalPages)
+	fmt.Printf("Raw extraction: %d/%d pages extracted\n", successCount, totalPages)
 	return textBuilder.String(), nil
 }
 
@@ -242,17 +242,17 @@ func DiagnosePDF(file multipart.File) {
 
 	reader, err := pdf.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
 	if err != nil {
-		fmt.Printf("❌ Không thể đọc PDF: %v\n", err)
+		fmt.Printf("Không thể đọc PDF: %v\n", err)
 		return
 	}
 
 	totalPages := reader.NumPage()
 	fmt.Printf("\n=== CHẨN ĐOÁN PDF ===\n")
-	fmt.Printf("📄 Tổng số trang: %d\n", totalPages)
-	fmt.Printf("📦 Kích thước: %d bytes\n", buf.Len())
+	fmt.Printf("Tổng số trang: %d\n", totalPages)
+	fmt.Printf("Kích thước: %d bytes\n", buf.Len())
 
 	// Kiểm tra 5 trang đầu
-	fmt.Println("\n🔍 Kiểm tra 5 trang đầu:")
+	fmt.Println("\nKiểm tra 5 trang đầu:")
 	for i := 1; i <= 5 && i <= totalPages; i++ {
 		page := reader.Page(i)
 
@@ -277,7 +277,7 @@ func DiagnosePDF(file multipart.File) {
 	}
 }
 
-// ✅ ExtractTextFromDOCX
+// ExtractTextFromDOCX
 func ExtractTextFromDOCX(fileHeader *multipart.FileHeader) (string, error) {
 	tmpFile, err := os.CreateTemp("", "upload-*.docx")
 	if err != nil {
@@ -310,7 +310,7 @@ func ExtractTextFromDOCX(fileHeader *multipart.FileHeader) (string, error) {
 		}
 	}
 	if docFile == nil {
-		return "", fmt.Errorf("không tìm thấy nội dung document.xml trong file DOCX")
+		return "", fmt.Errorf("document.xml không tồn tại")
 	}
 
 	rc, err := docFile.Open()
@@ -319,8 +319,10 @@ func ExtractTextFromDOCX(fileHeader *multipart.FileHeader) (string, error) {
 	}
 	defer rc.Close()
 
-	var buf bytes.Buffer
 	decoder := xml.NewDecoder(rc)
+	var result bytes.Buffer
+	var paragraph bytes.Buffer
+
 	for {
 		tok, err := decoder.Token()
 		if err == io.EOF {
@@ -329,21 +331,34 @@ func ExtractTextFromDOCX(fileHeader *multipart.FileHeader) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		switch se := tok.(type) {
+
+		switch t := tok.(type) {
 		case xml.StartElement:
-			if se.Name.Local == "t" {
+			// Bắt đầu paragraph
+			if t.Name.Local == "p" {
+				paragraph.Reset()
+			}
+
+			// Text
+			if t.Name.Local == "t" {
 				var text string
-				if err := decoder.DecodeElement(&text, &se); err == nil {
-					buf.WriteString(text + " ")
+				if err := decoder.DecodeElement(&text, &t); err == nil {
+					paragraph.WriteString(text)
 				}
+			}
+
+		case xml.EndElement:
+			if t.Name.Local == "p" {
+				result.WriteString(paragraph.String())
+				result.WriteString("\n")
 			}
 		}
 	}
 
-	return strings.TrimSpace(buf.String()), nil
+	return strings.TrimSpace(result.String()), nil
 }
 
-// ✅ ExtractTextFromTXT
+// ExtractTextFromTXT
 func ExtractTextFromTXT(fileHeader *multipart.FileHeader) (string, error) {
 	file, err := fileHeader.Open()
 	if err != nil {

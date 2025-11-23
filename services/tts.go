@@ -100,7 +100,7 @@ func SynthesizeText(text, voice string, rate float64) ([]byte, error) {
 
 	compressed, err := ultraCompressAudio(merged)
 	if err != nil {
-		fmt.Println("⚠️ Compression failed, returning merged file:", err)
+		fmt.Println("Compression failed, returning merged file:", err)
 		return merged, nil
 	}
 
@@ -164,16 +164,16 @@ func mergeAudioFilesLow(files []string) ([]byte, error) {
 		return nil, err
 	}
 
-	// ✅ CRITICAL: minrate=maxrate=b:a → CBR thực sự
+	// CRITICAL: minrate=maxrate=b:a → CBR thực sự
 	cmd := exec.Command("ffmpeg",
 		"-f", "concat",
 		"-safe", "0",
 		"-i", listFile,
 		"-c:a", "libmp3lame",
 		"-b:a", "32k", // Target bitrate
-		"-minrate", "32k", // ✅ Min = target
-		"-maxrate", "32k", // ✅ Max = target → CBR
-		"-bufsize", "32k", // ✅ Buffer size = bitrate
+		"-minrate", "32k", // Min = target
+		"-maxrate", "32k", // Max = target → CBR
+		"-bufsize", "32k", // Buffer size = bitrate
 		"-ar", "16000",
 		"-ac", "1",
 		"-id3v2_version", "3",
@@ -192,7 +192,7 @@ func mergeAudioFilesLow(files []string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("output file not found: %w", err)
 	}
-	fmt.Printf("✅ Merged CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
+	fmt.Printf("Merged CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
 
 	return os.ReadFile(outputFile)
 }
@@ -208,12 +208,12 @@ func ultraCompressAudio(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// ✅ CBR 24k thực sự
+	// CBR 24k thực sự
 	cmd := exec.Command("ffmpeg",
 		"-i", tmpIn,
 		"-c:a", "libmp3lame",
 		"-b:a", "24k",
-		"-minrate", "24k", // ✅ CBR enforcement
+		"-minrate", "24k", // CBR enforcement
 		"-maxrate", "24k",
 		"-bufsize", "24k",
 		"-ar", "16000",
@@ -235,7 +235,7 @@ func ultraCompressAudio(data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("compressed file not found: %w", err)
 	}
-	fmt.Printf("✅ Compressed CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
+	fmt.Printf("Compressed CBR file: %.2f MB\n", float64(stat.Size())/(1024*1024))
 
 	return os.ReadFile(tmpOut)
 }
