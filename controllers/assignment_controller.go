@@ -378,14 +378,9 @@ func GetTeacherAssignments(c *gin.Context) {
 		Preload("Podcast.Chapter.Subject").
 		Preload("Questions.Options")
 
-	// Quyền giảng viên
-	if role == string(models.RoleLecturer) {
+	// Quyền giảng viên hoặc admin: chỉ lấy bài tập do chính mình tạo
+	if role == string(models.RoleLecturer) || role == string(models.RoleAdmin) {
 		query = query.Where("assignments.created_by = ?", userUUID)
-	}
-
-	// Admin preload creator
-	if role == string(models.RoleAdmin) {
-		query = query.Preload("Creator")
 	}
 
 	// JOIN TABLES ĐỂ FILTER

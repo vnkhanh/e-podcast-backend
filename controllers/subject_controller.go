@@ -295,6 +295,7 @@ func UpdateSubject(c *gin.Context) {
 
 	subject.Name = name
 	subject.Slug = slugValue
+	subject.CourseCode = CourseCode
 	if input.Status != nil {
 		subject.Status = *input.Status
 	}
@@ -421,11 +422,43 @@ func DeleteSubject(c *gin.Context) {
 	}
 
 	var subject models.Subject
-	if err := config.DB.First(&subject, "id = ?", subjectID).Error; err != nil {
+	if err := config.DB.
+		Preload("Chapters").
+		First(&subject, "id = ?", subjectID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy môn học"})
 		return
 	}
 
+	// 1. Lấy danh sách chapter IDs
+	chapterIDs := make([]uuid.UUID, 0)
+	for _, ch := range subject.Chapters {
+		chapterIDs = append(chapterIDs, ch.ID)
+	}
+
+	// 2. Kiểm tra có podcast không
+	var count int64
+	if len(chapterIDs) > 0 {
+		if err := config.DB.
+			Model(&models.Podcast{}).
+			Where("chapter_id IN ?", chapterIDs).
+			Count(&count).Error; err != nil {
+
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error": "Lỗi khi kiểm tra podcast của môn học",
+			})
+			return
+		}
+	}
+
+	// 3. Nếu có podcast => không cho xóa
+	if count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Không thể xóa môn học vì có %d podcast liên quan đến các chương", count),
+		})
+		return
+	}
+
+	// 4. Nếu không có podcast => xóa
 	if err := config.DB.Delete(&subject).Error; err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -713,7 +746,7 @@ func GetAllSubjectsUser(c *gin.Context) {
 
 	// Tạo base query (bắt đầu từ subjects)
 	baseQuery := db.Table("subjects").
-		Select("DISTINCT subjects.id, subjects.name, subjects.slug, subjects.status, subjects.created_at, subjects.updated_at, subjects.created_by, subjects.updated_by").
+		Select("DISTINCT subjects.id, subjects.name, subjects.slug, subjects.course_code, subjects.status, subjects.created_at, subjects.updated_at, subjects.created_by, subjects.updated_by").
 		Joins("LEFT JOIN chapters ON chapters.subject_id = subjects.id").
 		Where("subjects.status = ?", true)
 

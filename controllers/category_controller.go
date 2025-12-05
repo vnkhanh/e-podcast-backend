@@ -269,11 +269,45 @@ func UpdateCategory(c *gin.Context) {
 }
 
 func DeleteCategory(c *gin.Context) {
-	id := c.Param("id")
-	if err := config.DB.Delete(&models.Category{}, "id = ?", id).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa category"})
+	idParam := c.Param("id")
+	categoryID, err := uuid.Parse(idParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID không hợp lệ"})
 		return
 	}
+
+	// 1. Kiểm tra category có tồn tại không
+	var category models.Category
+	if err := config.DB.First(&category, "id = ?", categoryID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Không tìm thấy danh mục"})
+		return
+	}
+
+	// 2. Kiểm tra bảng trung gian podcast_categories
+	var count int64
+	if err := config.DB.
+		Table("podcast_categories").
+		Where("category_id = ?", categoryID).
+		Count(&count).Error; err != nil {
+
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Lỗi khi kiểm tra podcast liên kết"})
+		return
+	}
+
+	// 3. Nếu đang được dùng => không cho xóa
+	if count > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": fmt.Sprintf("Danh mục đang được sử dụng bởi %d podcast. Không thể xóa.", count),
+		})
+		return
+	}
+
+	// 4. Xóa category
+	if err := config.DB.Delete(&category).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Không thể xóa danh mục"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Xóa danh mục thành công"})
 }
 
