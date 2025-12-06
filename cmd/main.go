@@ -39,6 +39,7 @@ func main() {
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		AllowWebSockets:  true,
+		MaxAge:           12 * time.Hour,
 	}))
 	// Gọi SetupRouter để đăng ký route
 	r = routes.SetupRouter(r, config.DB)
