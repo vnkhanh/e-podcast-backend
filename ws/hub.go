@@ -34,6 +34,40 @@ type DocumentStatusUpdate struct {
 	Error      string  `json:"error,omitempty"`
 }
 
+// GetStats trả về thống kê WebSocket connections
+func (h *Hub) GetStats() map[string]interface{} {
+	h.Mutex.RLock()
+	defer h.Mutex.RUnlock()
+
+	// Đếm tổng số podcast/document connections
+	totalPodcastConnections := 0
+	activePodcasts := 0
+	for _, clients := range h.Clients {
+		totalPodcastConnections += len(clients)
+		if len(clients) > 0 {
+			activePodcasts++
+		}
+	}
+
+	// Đếm user connections
+	totalUserConnections := 0
+	activeUsers := 0
+	for _, clients := range h.UserClients {
+		totalUserConnections += len(clients)
+		if len(clients) > 0 {
+			activeUsers++
+		}
+	}
+
+	return map[string]interface{}{
+		"podcast_connections": totalPodcastConnections,
+		"active_podcasts":     activePodcasts,
+		"user_connections":    totalUserConnections,
+		"active_users":        activeUsers,
+		"global_connections":  len(h.GlobalClients),
+	}
+}
+
 // Register theo documentID riêng
 func (h *Hub) Register(docID string, conn *websocket.Conn) {
 	h.Mutex.Lock()
@@ -116,7 +150,7 @@ func (h *Hub) BroadcastToUser(userID string, messageType int, data []byte) {
 	}
 }
 
-// Huỷ đăng ký theo userID
+// Hủy đăng ký theo userID
 func (h *Hub) UnregisterUser(userID string, conn *websocket.Conn) {
 	h.Mutex.Lock()
 	defer h.Mutex.Unlock()
