@@ -23,10 +23,28 @@ func InitDB() {
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 
+	// DB SSL mode: mặc định là "require" trên Render. Nếu muốn tắt (dev) set DB_SSLMODE=disable
+	sslmode := os.Getenv("DB_SSLMODE")
+	if sslmode == "" {
+		sslmode = "require"
+	}
+
+	// Timezone: đọc từ env TZ (ví dụ "Asia/Ho_Chi_Minh"). Nếu không set -> UTC
+	tz := os.Getenv("TZ")
+	if tz == "" {
+		tz = "UTC"
+	}
+
+	// Thử load timezone; nếu lỗi thì fallback về UTC để tránh "unknown time zone"
+	if _, err := time.LoadLocation(tz); err != nil {
+		log.Printf("Không thể load timezone %s: %v — fallback sang UTC\n", tz, err)
+		tz = "UTC"
+	}
+
 	// DSN cho PostgreSQL
 	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Ho_Chi_Minh",
-		dbHost, dbUser, dbPass, dbName, dbPort,
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
+		dbHost, dbUser, dbPass, dbName, dbPort, sslmode, tz,
 	)
 
 	// Kết nối DB với logger
@@ -95,9 +113,22 @@ func ConnectDatabase() (*gorm.DB, error) {
 	dbPass := os.Getenv("DB_PASSWORD")
 	dbName := os.Getenv("DB_NAME")
 
+	sslmode := os.Getenv("DB_SSLMODE")
+	if sslmode == "" {
+		sslmode = "require"
+	}
+
+	tz := os.Getenv("TZ")
+	if tz == "" {
+		tz = "UTC"
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		tz = "UTC"
+	}
+
 	dsn := fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=Asia/Ho_Chi_Minh",
-		dbHost, dbUser, dbPass, dbName, dbPort,
+		"host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s",
+		dbHost, dbUser, dbPass, dbName, dbPort, sslmode, tz,
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{

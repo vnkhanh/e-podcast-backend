@@ -14,9 +14,9 @@ import (
 )
 
 func main() {
-	// Load .env
+	// Load .env (chỉ dùng khi chạy local).
 	if err := godotenv.Load(); err != nil {
-		log.Println("Không tìm thấy file .env")
+		log.Println("Không tìm thấy file .env (bỏ qua khi deploy trên Render)")
 	}
 
 	config.InitDB()
@@ -26,8 +26,14 @@ func main() {
 	utils.StartCleanupJob()
 
 	// Bật CORS
+	origin := os.Getenv("CORS_ORIGIN")
+	allowOrigins := []string{"http://localhost:5173"}
+	if origin != "" {
+		allowOrigins = append(allowOrigins, origin)
+	}
+
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173"},
+		AllowOrigins:     allowOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
